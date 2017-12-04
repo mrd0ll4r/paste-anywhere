@@ -38,16 +38,16 @@ impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
         let mut entries = self.entries.clone();
 
         match entries.entry(host) {
-            Entry::Vacant(e) => { e.insert(1); }
+            Entry::Vacant(e) => {
+                e.insert(1);
+            }
             Entry::Occupied(mut e) => {
                 let v = *e.get();
                 e.insert(v + 1);
             }
         };
 
-        VectorClock {
-            entries,
-        }
+        VectorClock { entries }
     }
 
     pub fn temporal_relation(&self, other: &Self) -> TemporalRelation {
@@ -107,7 +107,9 @@ impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
         for (host, &other_n) in other.entries.iter() {
             // TODO clean this up
             match entries.entry(host.clone()) {
-                Entry::Vacant(e) => { e.insert(other_n); }
+                Entry::Vacant(e) => {
+                    e.insert(other_n);
+                }
                 Entry::Occupied(mut e) => {
                     let self_n = *e.get();
 
@@ -118,15 +120,13 @@ impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
             }
         }
 
-        VectorClock {
-            entries,
-        }
+        VectorClock { entries }
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{VectorClock, TemporalRelation};
+    use super::{TemporalRelation, VectorClock};
 
     type StrVectorClock = VectorClock<&'static str>;
 
