@@ -12,22 +12,40 @@ use rand::Rng;
 use serde;
 use serde_json;
 
-type PeerID = Endpoint;
+pub type PeerID = Endpoint;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct CopyClock {
+pub struct CopyClock {
     clock: VectorClock<PeerID>,
     last_copy_src: PeerID,
 }
 
+impl CopyClock {
+    pub fn new(clock: &VectorClock<PeerID>, last_copy_src: &PeerID) -> CopyClock {
+        CopyClock {
+            clock: clock.clone(),
+            last_copy_src: last_copy_src.clone(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Ord, PartialOrd, PartialEq, Eq, Hash, Copy, Clone)]
-struct Endpoint {
+pub struct Endpoint {
     ip: net::Ipv4Addr,
     port: u16,
 }
 
+impl Endpoint {
+    pub fn new(ip: &net::Ipv4Addr, port: u16) -> Endpoint {
+        Endpoint {
+            ip: ip.clone(),
+            port: port,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug)]
-struct Message {
+pub struct Message {
     message_id: [u8; 16],
     message_type: MessageType,
     src_id: PeerID,
@@ -48,7 +66,7 @@ fn generate_message_id() -> [u8; 16] {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-enum MessageType {
+pub enum MessageType {
     // use src_id as source
     JoinRequest,
     JoinResponse { target: Endpoint },
@@ -60,7 +78,7 @@ enum MessageType {
     ErrorResponse { state: CopyClock, error: String },
 }
 
-fn accept(socket: &mut net::TcpListener) -> Result<IncomingConnection, Box<Error>> {
+pub fn accept(socket: &mut net::TcpListener) -> Result<IncomingConnection, Box<Error>> {
     for conn in socket.incoming() {
         if let Err(err) = conn {
             return Err(From::from(err));
@@ -112,23 +130,26 @@ fn accept(socket: &mut net::TcpListener) -> Result<IncomingConnection, Box<Error
     Err(From::from("no incoming connection?"))
 }
 
-struct IncomingConnection {
-    conn: Connection,
-    first_msg: Message,
+pub struct IncomingConnection {
+    pub conn: Connection,
+    pub first_msg: Message,
 }
 
-enum Connection {
+#[derive(Debug)]
+pub enum Connection {
     Join(JoinConnection),
     Copy(CopyConnection),
     P2P(P2PConnection),
 }
 
-enum Direction {
+#[derive(Debug)]
+pub enum Direction {
     Incoming,
     Outgoing,
 }
 
-struct JoinConnection {
+#[derive(Debug)]
+pub struct JoinConnection {
     conn: net::TcpStream,
     dir: Direction,
 }
@@ -172,7 +193,8 @@ impl JoinConnection {
     }
 }
 
-struct CopyConnection {
+#[derive(Debug)]
+pub struct CopyConnection {
     conn: net::TcpStream,
     dir: Direction,
 }
@@ -211,7 +233,8 @@ impl CopyConnection {
     }
 }
 
-struct P2PConnection {
+#[derive(Debug)]
+pub struct P2PConnection {
     conn: net::TcpStream,
     dir: Direction,
 }
