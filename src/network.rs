@@ -3,6 +3,9 @@ use clock::VectorClock;
 use std::error::Error;
 use std::io::Read;
 use std::io;
+use std::net::TcpStream;
+use std::net::SocketAddr;
+use std::io::Write;
 
 use rand;
 use rand::Rng;
@@ -129,29 +132,120 @@ struct JoinConnection {
     conn: net::TcpStream,
     dir: Direction,
 }
-/*
+
 impl JoinConnection {
-    pub fn new() -> JoinConnection {}
-}*/
+    fn connect(remote: &PeerID, msg: Message) -> Result<JoinConnection, Box<Error>> {
+        let serialized = serde_json::to_string(&msg)?;
+
+        let mut stream = TcpStream::connect(SocketAddr::from((remote.ip, remote.port)))?;
+
+        stream.write(serialized.as_bytes())?;
+
+        Ok(JoinConnection {
+            conn: stream,
+            dir: Direction::Outgoing,
+        })
+    }
+
+    pub fn open(local: &PeerID, remote: &PeerID, ttl: u32) -> Result<JoinConnection, Box<Error>> {
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::JoinRequest,
+            src_id: local.clone(),
+            ttl: ttl,
+            hop_count: 0,
+        };
+
+        JoinConnection::connect(remote, msg)
+    }
+
+    pub fn forward(remote: &PeerID, incoming: &Message) -> Result<JoinConnection, Box<Error>> {
+        let msg = Message {
+            message_id: incoming.message_id,
+            message_type: MessageType::JoinRequest,
+            src_id: incoming.src_id.clone(),
+            ttl: incoming.ttl - 1,
+            hop_count: incoming.hop_count + 1,
+        };
+
+        JoinConnection::connect(remote, msg)
+    }
+}
 
 struct CopyConnection {
     conn: net::TcpStream,
     dir: Direction,
 }
 
-/*
 impl CopyConnection {
-    pub fn new() -> CopyConnection {}
+    fn connect(remote: &PeerID, msg: Message) -> Result<CopyConnection, Box<Error>> {
+        let serialized = serde_json::to_string(&msg)?;
+
+        let mut stream = TcpStream::connect(SocketAddr::from((remote.ip, remote.port)))?;
+
+        stream.write(serialized.as_bytes())?;
+
+        Ok(CopyConnection {
+            conn: stream,
+            dir: Direction::Outgoing,
+        })
+    }
+
+    pub fn open(
+        local: &PeerID,
+        remote: &PeerID,
+        ttl: u32,
+        content_type: &String,
+    ) -> Result<CopyConnection, Box<Error>> {
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::CopyRequest {
+                content_type: content_type.clone(),
+            },
+            src_id: local.clone(),
+            ttl: ttl,
+            hop_count: 0,
+        };
+
+        CopyConnection::connect(remote, msg)
+    }
 }
-*/
 
 struct P2PConnection {
     conn: net::TcpStream,
     dir: Direction,
 }
 
-/*
 impl P2PConnection {
-    pub fn new() -> P2PConnection {}
+    fn connect(remote: &PeerID, msg: Message) -> Result<P2PConnection, Box<Error>> {
+        let serialized = serde_json::to_string(&msg)?;
+
+        let mut stream = TcpStream::connect(SocketAddr::from((remote.ip, remote.port)))?;
+
+        stream.write(serialized.as_bytes())?;
+
+        Ok(P2PConnection {
+            conn: stream,
+            dir: Direction::Outgoing,
+        })
+    }
+
+    pub fn open(
+        local: &PeerID,
+        remote: &PeerID,
+        ttl: u32,
+        state: &CopyClock,
+    ) -> Result<P2PConnection, Box<Error>> {
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::Ping {
+                state: state.clone(),
+            },
+            src_id: local.clone(),
+            ttl: ttl,
+            hop_count: 0,
+        };
+
+        P2PConnection::connect(remote, msg)
+    }
 }
-*/
