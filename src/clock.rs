@@ -15,8 +15,8 @@ pub enum TemporalRelation {
     ConcurrentSmaller,
 }
 
-#[derive(PartialEq, Eq, Debug, Serialize, Deserialize)]
-pub struct VectorClock<HostType: Hash + Eq> {
+#[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
+pub struct VectorClock<HostType: Hash + Eq + Clone> {
     entries: HashMap<HostType, u64>,
 }
 
