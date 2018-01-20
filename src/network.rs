@@ -12,6 +12,8 @@ use rand::Rng;
 use serde;
 use serde_json;
 
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+
 pub type PeerID = Endpoint;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -78,20 +80,49 @@ pub enum MessageType {
     ErrorResponse { state: CopyClock, error: String },
 }
 
+fn write_length_prefixed(conn: &mut net::TcpStream, msg: &Message) -> Result<(), Box<Error>> {
+    let serialized = serde_json::to_vec(&msg)?;
+    let len = serialized.len() as u32;
+
+    conn.write_u32::<BigEndian>(len)?;
+    let n = conn.write(&serialized.to_vec())?;
+
+    if n != serialized.len() {
+        // TODO we _could_ handle this nicely
+        return Err(From::from(format!(
+            "Unable to send, wrote {} bytes, expected {}",
+            n,
+            serialized.len()
+        )));
+    }
+
+    Ok(())
+}
+
+fn read_length_prefixed(r: &mut TcpStream) -> Result<Message, Box<Error>> {
+    let len = r.read_u32::<BigEndian>()?;
+
+    // we just need a slice of length len, how hard can it be...
+    let mut buf = Vec::with_capacity(len as usize);
+    for i in 0..len {
+        buf.push(0);
+    }
+
+    r.read_exact(buf.as_mut_slice())?;
+
+    let deserialized: Message = serde_json::from_slice(&buf)?;
+
+    Ok(deserialized)
+}
+
 pub fn accept(socket: &mut net::TcpListener) -> Result<IncomingConnection, Box<Error>> {
     for conn in socket.incoming() {
         if let Err(err) = conn {
             return Err(From::from(err));
         }
-        let mut stream = conn.unwrap();
+        let mut stream = conn?;
 
-        let mut buf = [0u8; 1024];
-        let n = stream.read(&mut buf)?;
-        if n == 0 {
-            return Err(From::from("Empty read, fixme maybe?"));
-        }
-
-        let deserialized: Message = serde_json::from_slice(&buf[0..n])?;
+        let deserialized = read_length_prefixed(&mut stream)?;
 
         match deserialized.message_type {
             MessageType::JoinRequest => {
@@ -156,11 +187,9 @@ pub struct JoinConnection {
 
 impl JoinConnection {
     fn connect(remote: &PeerID, msg: Message) -> Result<JoinConnection, Box<Error>> {
-        let serialized = serde_json::to_string(&msg)?;
-
         let mut stream = TcpStream::connect(SocketAddr::from((remote.ip, remote.port)))?;
 
-        stream.write(serialized.as_bytes())?;
+        write_length_prefixed(&mut stream, &msg)?;
 
         Ok(JoinConnection {
             conn: stream,
@@ -201,11 +230,9 @@ pub struct CopyConnection {
 
 impl CopyConnection {
     fn connect(remote: &PeerID, msg: Message) -> Result<CopyConnection, Box<Error>> {
-        let serialized = serde_json::to_string(&msg)?;
-
         let mut stream = TcpStream::connect(SocketAddr::from((remote.ip, remote.port)))?;
 
-        stream.write(serialized.as_bytes())?;
+        write_length_prefixed(&mut stream, &msg)?;
 
         Ok(CopyConnection {
             conn: stream,
@@ -241,11 +268,9 @@ pub struct P2PConnection {
 
 impl P2PConnection {
     fn connect(remote: &PeerID, msg: Message) -> Result<P2PConnection, Box<Error>> {
-        let serialized = serde_json::to_string(&msg)?;
-
         let mut stream = TcpStream::connect(SocketAddr::from((remote.ip, remote.port)))?;
 
-        stream.write(serialized.as_bytes())?;
+        write_length_prefixed(&mut stream, &msg)?;
 
         Ok(P2PConnection {
             conn: stream,

@@ -1,3 +1,4 @@
+extern crate byteorder;
 extern crate rand;
 extern crate serde;
 #[macro_use]
