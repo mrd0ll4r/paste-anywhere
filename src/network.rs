@@ -173,7 +173,7 @@ pub enum Connection {
     P2P(P2PConnection),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialOrd, PartialEq)]
 pub enum Direction {
     Incoming,
     Outgoing,
@@ -220,6 +220,37 @@ impl JoinConnection {
 
         JoinConnection::connect(remote, msg)
     }
+
+    pub fn respond(
+        &mut self,
+        src: &Endpoint,
+        target: &Endpoint,
+        msg_id: [u8; 16],
+        ttl: u32,
+        hop_count: u32,
+    ) -> Result<(), Box<Error>> {
+        if self.dir != Direction::Incoming {
+            return Err(From::from("can only respond on incoming connections"));
+        }
+
+        let msg = Message {
+            message_id: msg_id,
+            message_type: MessageType::JoinResponse {
+                target: target.clone(),
+            },
+            src_id: src.clone(),
+            ttl: ttl,
+            hop_count: hop_count,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)
+    }
+
+    pub fn close(mut self) -> Result<(), Box<Error>> {
+        self.conn.flush()?;
+        Ok(())
+        // conn should be closed as soon as it is dropped, i.e. here
+    }
 }
 
 #[derive(Debug)]
@@ -258,6 +289,52 @@ impl CopyConnection {
 
         CopyConnection::connect(remote, msg)
     }
+
+    pub fn respond(&mut self, text: &String, local: &Endpoint) -> Result<(), Box<Error>> {
+        if self.dir != Direction::Incoming {
+            return Err(From::from("can only respond on incoming connection"));
+        }
+
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::TextResponse { text: text.clone() },
+            src_id: local.clone(),
+            ttl: 1,
+            hop_count: 0,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)
+    }
+
+    pub fn respond_error(
+        &mut self,
+        error: &String,
+        state: &CopyClock,
+        local: &Endpoint,
+    ) -> Result<(), Box<Error>> {
+        if self.dir != Direction::Incoming {
+            return Err(From::from("can only respond on incoming connection"));
+        }
+
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::ErrorResponse {
+                error: error.clone(),
+                state: state.clone(),
+            },
+            src_id: local.clone(),
+            ttl: 1,
+            hop_count: 0,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)
+    }
+
+    pub fn close(mut self) -> Result<(), Box<Error>> {
+        self.conn.flush()?;
+        Ok(())
+        // conn should be closed as soon as it is dropped, i.e. here
+    }
 }
 
 #[derive(Debug)]
@@ -295,5 +372,59 @@ impl P2PConnection {
         };
 
         P2PConnection::connect(remote, msg)
+    }
+
+    pub fn ping(&mut self, state: &CopyClock, local: &Endpoint) -> Result<(), Box<Error>> {
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::Ping {
+                state: state.clone(),
+            },
+            src_id: local.clone(),
+            ttl: 1,
+            hop_count: 0,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)?;
+
+        Ok(())
+    }
+
+    pub fn pong(&mut self, state: &CopyClock, local: &Endpoint) -> Result<(), Box<Error>> {
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::Pong {
+                state: state.clone(),
+            },
+            src_id: local.clone(),
+            ttl: 1,
+            hop_count: 0,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)?;
+
+        Ok(())
+    }
+
+    pub fn notify_copy(&mut self, state: &CopyClock, local: &Endpoint) -> Result<(), Box<Error>> {
+        let msg = Message {
+            message_id: generate_message_id(),
+            message_type: MessageType::CopyNotification {
+                state: state.clone(),
+            },
+            src_id: local.clone(),
+            ttl: 1,
+            hop_count: 0,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)?;
+
+        Ok(())
+    }
+
+    pub fn close(mut self) -> Result<(), Box<Error>> {
+        self.conn.flush()?;
+        Ok(())
+        // conn should be closed as soon as it is dropped, i.e. here
     }
 }
