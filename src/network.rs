@@ -48,11 +48,11 @@ impl Endpoint {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct Message {
-    message_id: [u8; 16],
-    message_type: MessageType,
-    src_id: PeerID,
-    ttl: u32,
-    hop_count: u32,
+    pub message_id: [u8; 16],
+    pub message_type: MessageType,
+    pub src_id: PeerID,
+    pub ttl: u32,
+    pub hop_count: u32,
 }
 
 fn generate_message_id() -> [u8; 16] {
