@@ -173,6 +173,17 @@ pub enum Connection {
     P2P(P2PConnection),
 }
 
+// TODO this might not be needed later
+impl Connection {
+    pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
+        match self {
+            &mut Connection::Join(ref mut c) => c.read_message(),
+            &mut Connection::Copy(ref mut c) => c.read_message(),
+            &mut Connection::P2P(ref mut c) => c.read_message(),
+        }
+    }
+}
+
 #[derive(Debug, PartialOrd, PartialEq)]
 pub enum Direction {
     Incoming,
@@ -244,6 +255,14 @@ impl JoinConnection {
         };
 
         write_length_prefixed(&mut self.conn, &msg)
+    }
+
+    pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
+        if self.dir != Direction::Outgoing {
+            return Err(From::from("can only read on outgoing JoinConnection"));
+        }
+
+        read_length_prefixed(&mut self.conn)
     }
 
     pub fn close(mut self) -> Result<(), Box<Error>> {
@@ -328,6 +347,14 @@ impl CopyConnection {
         };
 
         write_length_prefixed(&mut self.conn, &msg)
+    }
+
+    pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
+        if self.dir != Direction::Outgoing {
+            return Err(From::from("can only read on outgoing CopyConnection"));
+        }
+
+        read_length_prefixed(&mut self.conn)
     }
 
     pub fn close(mut self) -> Result<(), Box<Error>> {
@@ -420,6 +447,10 @@ impl P2PConnection {
         write_length_prefixed(&mut self.conn, &msg)?;
 
         Ok(())
+    }
+
+    pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
+        read_length_prefixed(&mut self.conn)
     }
 
     pub fn close(mut self) -> Result<(), Box<Error>> {
