@@ -7,9 +7,11 @@ extern crate serde_json;
 
 mod clock;
 mod network;
+mod overlay;
 
 use clock::*;
 use network::*;
+use overlay::*;
 
 use std::net::*;
 use std::env;
