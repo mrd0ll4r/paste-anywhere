@@ -75,7 +75,11 @@ impl Overlay {
             }
         }
 
-        let available = self.available_ids.lock().unwrap();
+
+        let mut available = self.available_ids.lock().unwrap();
+        available.as_mut_slice().sort();
+        available.dedup();
+        println!("join: got these peers: {:?}", available);
         if available.len() == 0 {
             return Err(From::from("I know no peers"));
         }
