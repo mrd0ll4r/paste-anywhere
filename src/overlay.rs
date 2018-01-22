@@ -87,11 +87,10 @@ impl Overlay {
         Ok(())
     }
 
-
-    // TODO this static lifetime is probably gonna come back to haunt us
-    pub fn start_accepting(&'static mut self) -> Result<(), Box<Error>> {
+    pub fn start_accepting(&self) {
+        let s = self.sock.clone();
         thread::spawn(move || {
-            let mut sock = self.sock.lock().unwrap();
+            let mut sock = s.lock().unwrap();
             loop {
                 let mut incoming = accept(&mut sock).unwrap();
                 println!(
@@ -146,7 +145,5 @@ impl Overlay {
                 }
             }
         });
-
-        Ok(())
     }
 }
