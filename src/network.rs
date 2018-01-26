@@ -18,8 +18,8 @@ pub type PeerID = Endpoint;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CopyClock {
-    clock: VectorClock<PeerID>,
-    last_copy_src: PeerID,
+    pub clock: VectorClock<PeerID>,
+    pub last_copy_src: PeerID,
 }
 
 impl CopyClock {
