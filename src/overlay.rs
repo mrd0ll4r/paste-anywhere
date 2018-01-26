@@ -3,7 +3,9 @@ use std::net::TcpListener;
 use std::net::Ipv4Addr;
 use std::error::Error;
 use std::thread;
+use std::collections::HashMap;
 
+use clock::VectorClock;
 use network::*;
 
 pub struct Overlay {
@@ -11,6 +13,10 @@ pub struct Overlay {
     sock: Arc<Mutex<TcpListener>>,
     bootstrap_ids: Vec<PeerID>,
     available_ids: Mutex<Vec<PeerID>>,
+    connected_peers: Arc<Mutex<HashMap<PeerID, ()>>>,
+    // TODO have state, clipboard in one mutex
+    state: Arc<Mutex<CopyClock>>,
+    clipboard: Arc<Mutex<String>>,
 }
 
 impl Overlay {
@@ -23,7 +29,33 @@ impl Overlay {
             sock: Arc::new(Mutex::new(sock)),
             bootstrap_ids: Vec::new(),
             available_ids: Mutex::new(Vec::new()),
+            connected_peers: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(CopyClock::new(
+                &VectorClock::new(),
+                &PeerID::new(&addr, local.port()),
+            ))),
+            clipboard: Arc::new(Mutex::new(String::new())),
         })
+    }
+
+    pub fn set_clipboard(&self, clipboard: &String) -> Result<(), Box<Error>> {
+        let mut current = self.clipboard.lock().unwrap();
+        *current = clipboard.clone();
+
+        // TODO increment state
+        // TODO send out copy notifications
+
+        Ok(())
+    }
+
+    pub fn get_clipboard(&self) -> Result<String, Box<Error>> {
+        let state = self.state.lock().unwrap().clone();
+        if state.last_copy_src.eq(&self.own_id) {
+            return Ok(self.clipboard.lock().unwrap().clone());
+        }
+
+        // TODO get from someone else
+        Err(From::from("Clipboard is somewhere else, implement me"))
     }
 
     fn perform_join_single(&self, mut conn: JoinConnection) {
@@ -89,6 +121,10 @@ impl Overlay {
 
     pub fn start_accepting(&self) {
         let s = self.sock.clone();
+        let peers = self.connected_peers.clone();
+        let own_id = self.own_id.clone();
+        let state = self.state.clone();
+        let clipboard = self.clipboard.clone();
         thread::spawn(move || {
             let mut sock = s.lock().unwrap();
             loop {
@@ -101,49 +137,96 @@ impl Overlay {
 
                 match incoming.conn {
                     Connection::P2P(mut c) => {
-                        thread::spawn(move || {
-                            loop {
-                                let msg = c.read_message();
-                                match msg {
-                                    Ok(m) => println!("received: {:?}", m),
-                                    Err(e) => {
-                                        println!("unable to read: {}", e);
-                                        return;
-                                    }
-                                }
-                            }
-                        });
+                        Overlay::handle_p2p_connection(c, own_id.clone(), state.clone());
                     }
                     Connection::Copy(mut c) => {
-                        thread::spawn(move || {
-                            loop {
-                                let msg = c.read_message();
-                                match msg {
-                                    Ok(m) => println!("received: {:?}", m),
-                                    Err(e) => {
-                                        println!("unable to read: {}", e);
-                                        return;
-                                    }
-                                }
-                            }
-                        });
+                        Overlay::handle_copy_connection(
+                            c,
+                            own_id.clone(),
+                            state.clone(),
+                            clipboard.clone(),
+                        );
                     }
                     Connection::Join(mut c) => {
-                        thread::spawn(move || {
-                            loop {
-                                let msg = c.read_message();
-                                match msg {
-                                    Ok(m) => println!("received: {:?}", m),
-                                    Err(e) => {
-                                        println!("unable to read: {}", e);
-                                        return;
-                                    }
-                                }
-                            }
-                        });
+                        Overlay::handle_join_connection(c, peers.clone(), own_id.clone());
                     }
                 }
             }
+        });
+    }
+
+    fn handle_copy_connection(
+        mut c: CopyConnection,
+        own_id: PeerID,
+        state: Arc<Mutex<CopyClock>>,
+        clipboard: Arc<Mutex<String>>,
+    ) {
+        thread::spawn(move || {
+            let state_copy = state.lock().unwrap().clone();
+
+            if !state_copy.last_copy_src.eq(&own_id) {
+                println!("<-copy: I don't have the latest clipboard, replying error");
+                let resp = c.respond_error(
+                    &"I don't have the latest clipboard".to_string(),
+                    &state_copy,
+                    &own_id,
+                );
+                match resp {
+                    Ok(_) => println!("<-copy: reply successful"),
+                    Err(e) => println!("<-copy: unable to reply: {}", e),
+                }
+
+                c.close();
+                return;
+            }
+
+            let clipboard_copy = clipboard.lock().unwrap().clone();
+            println!("<-copy: sending TextResponse...");
+            let resp = c.respond(&clipboard_copy, &own_id);
+            match resp {
+                Ok(_) => println!("<-copy: reply successful"),
+                Err(e) => println!("<-copy: unable to reply: {}", e),
+            }
+
+            c.close();
+        });
+    }
+
+    fn handle_p2p_connection(mut c: P2PConnection, own_id: PeerID, state: Arc<Mutex<CopyClock>>) {
+        thread::spawn(move || {
+            loop {
+                let msg = c.read_message();
+                match msg {
+                    Ok(m) => println!("received: {:?}", m),
+                    Err(e) => {
+                        println!("unable to read: {}", e);
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    fn handle_join_connection(
+        mut c: JoinConnection,
+        peers: Arc<Mutex<HashMap<PeerID, ()>>>,
+        own_id: PeerID,
+    ) {
+        thread::spawn(move || {
+            let peers = peers.lock().unwrap();
+            println!("{:?}", peers);
+            loop {
+                let msg = c.read_message();
+                match msg {
+                    Ok(m) => println!("received: {:?}", m),
+                    Err(e) => {
+                        println!("unable to read: {}", e);
+                        return;
+                    }
+                }
+            }
+
+            JoinConnection::open(&own_id, &own_id, 8);
         });
     }
 }
