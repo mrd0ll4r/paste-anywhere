@@ -21,14 +21,14 @@ pub struct Overlay {
 }
 
 impl Overlay {
-    pub fn new(addr: &Ipv4Addr) -> Result<Overlay, Box<Error>> {
+    pub fn new(addr: &Ipv4Addr, bootstrap_peers: Vec<PeerID>) -> Result<Overlay, Box<Error>> {
         let sock = TcpListener::bind((addr.clone(), 0 as u16))?;
         let local = sock.local_addr()?;
 
         Ok(Overlay {
             own_id: PeerID::new(&addr, local.port()),
             sock: Arc::new(Mutex::new(sock)),
-            bootstrap_ids: Vec::new(),
+            bootstrap_ids: bootstrap_peers,
             available_ids: Mutex::new(Vec::new()),
             connected_peers: Arc::new(Mutex::new(HashMap::new())),
             state: Arc::new(Mutex::new(CopyClock::new(
@@ -116,6 +116,8 @@ impl Overlay {
         if available.len() == 0 {
             return Err(From::from("I know no peers"));
         }
+
+        // TODO establish P2P connections with these peers
 
         Ok(())
     }
