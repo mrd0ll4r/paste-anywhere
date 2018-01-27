@@ -155,7 +155,11 @@ pub fn accept(socket: &mut net::TcpListener) -> Result<IncomingConnection, Box<E
                 });
             }
             _ => {
-                // TODO log this
+                println!(
+                    "accept: Got invalid first message from {:?}: {:?}",
+                    stream.peer_addr(),
+                    deserialized
+                );
                 continue;
             }
         }
