@@ -234,26 +234,41 @@ impl JoinConnection {
         JoinConnection::connect(remote, msg)
     }
 
-    pub fn respond(
+    pub fn respond(&mut self, own_id: &Endpoint, incoming: &Message) -> Result<(), Box<Error>> {
+        if self.dir != Direction::Incoming {
+            return Err(From::from("can only respond on incoming connections"));
+        }
+
+        let msg = Message {
+            message_id: incoming.message_id,
+            message_type: MessageType::JoinResponse {
+                target: incoming.src_id.clone(),
+            },
+            src_id: own_id.clone(),
+            ttl: incoming.ttl,
+            hop_count: incoming.hop_count,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)
+    }
+
+    pub fn forward_response(
         &mut self,
-        src: &Endpoint,
+        incoming: &Message,
         target: &Endpoint,
-        msg_id: [u8; 16],
-        ttl: u32,
-        hop_count: u32,
     ) -> Result<(), Box<Error>> {
         if self.dir != Direction::Incoming {
             return Err(From::from("can only respond on incoming connections"));
         }
 
         let msg = Message {
-            message_id: msg_id,
+            message_id: incoming.message_id,
             message_type: MessageType::JoinResponse {
                 target: target.clone(),
             },
-            src_id: src.clone(),
-            ttl: ttl,
-            hop_count: hop_count,
+            src_id: incoming.src_id.clone(),
+            ttl: incoming.ttl,
+            hop_count: incoming.hop_count,
         };
 
         write_length_prefixed(&mut self.conn, &msg)
