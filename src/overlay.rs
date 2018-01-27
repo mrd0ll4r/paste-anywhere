@@ -56,8 +56,21 @@ impl Overlay {
             return Ok(self.clipboard.lock().unwrap().clone());
         }
 
-        // TODO get from someone else
-        Err(From::from("Clipboard is somewhere else, implement me"))
+        let mut conn =
+            CopyConnection::open(&self.own_id, &state.last_copy_src, 8, &"text".to_string())?;
+
+        let msg = conn.read_message()?;
+
+        if let MessageType::ErrorResponse { state, error } = msg.message_type {
+            // TODO update state
+            return Err(From::from(format!("remote  replied with error: {}", error)));
+        }
+        if let MessageType::TextResponse { text } = msg.message_type {
+            return Ok(text);
+        }
+
+        println!("->copy: received invalid response, got: {:?}", msg);
+        Err(From::from("remote sent an invalid reply, check logs"))
     }
 
     fn perform_join_single(&self, mut conn: JoinConnection) {
