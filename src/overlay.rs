@@ -106,6 +106,8 @@ impl Overlay {
     }
 
     pub fn perform_join(&mut self) -> Result<(), Box<Error>> {
+        // TODO make this  parallel
+        // TODO only take n peers for this, not all of them
         for i in 0..self.bootstrap_ids.len() {
             let id = self.bootstrap_ids.get(i).unwrap();
 
@@ -271,6 +273,7 @@ impl Overlay {
                 msg.ttl, p
             );
 
+            // TODO make this parallel
             for ep in p.iter() {
                 println!("<-join: forwarding to {:?}", ep);
                 let mut conn = JoinConnection::forward(&ep, &msg);
