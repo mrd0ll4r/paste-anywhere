@@ -46,9 +46,11 @@ impl Endpoint {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+pub type MessageID = [u8; 16];
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
-    pub message_id: [u8; 16],
+    pub message_id: MessageID,
     pub message_type: MessageType,
     pub src_id: PeerID,
     pub ttl: u32,
@@ -67,7 +69,7 @@ fn generate_message_id() -> [u8; 16] {
     b
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum MessageType {
     // use src_id as source
     JoinRequest,
