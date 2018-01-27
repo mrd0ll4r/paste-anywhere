@@ -152,7 +152,6 @@ mod test {
         assert_eq!(c2.temporal_relation(&c1), TemporalRelation::EffectOf);
     }
 
-
     /*
     #[test]
     fn test_diverged() {

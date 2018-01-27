@@ -42,15 +42,13 @@ fn server() {
         println!("{:?}", incoming.first_msg);
         println!("{:?}", incoming.conn);
 
-        thread::spawn(move || {
-            loop {
-                let msg = incoming.conn.read_message();
-                match msg {
-                    Ok(m) => println!("received: {:?}", m),
-                    Err(e) => {
-                        println!("unable to read: {}", e);
-                        return;
-                    }
+        thread::spawn(move || loop {
+            let msg = incoming.conn.read_message();
+            match msg {
+                Ok(m) => println!("received: {:?}", m),
+                Err(e) => {
+                    println!("unable to read: {}", e);
+                    return;
                 }
             }
         });
@@ -87,7 +85,6 @@ fn client(port: u16) {
     println!("Connected Copy...");
     copy_conn.close().unwrap();
     println!("Closed copy...");
-
 
     println!("Done!")
 }
