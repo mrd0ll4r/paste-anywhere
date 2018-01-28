@@ -8,6 +8,7 @@ extern crate serde_json;
 mod clock;
 mod network;
 mod overlay;
+mod clipboard;
 
 use clock::*;
 use network::*;
@@ -16,12 +17,26 @@ use overlay::*;
 use std::net::*;
 use std::env;
 use std::thread;
+use std::time;
+use clipboard::Clipboard;
 
-fn main() {
+fn main(){
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
-        println!("Gonna be a client...");
-        client(8080);
+        if args[1].starts_with("clip") {
+            let (mut cb,recv)=Clipboard::init().unwrap();
+            println!("!-----------------------!");
+            let x=cb.waitForString().unwrap();
+
+            format!("{:?}\n",x);
+            thread::sleep(time::Duration::from_secs(10));
+            println!("!-----------------------!");
+            let x=cb.waitForString().unwrap();
+            format!("{:?}\n",x);
+        }else{
+            println!("Gonna be a client...");
+            client(8080);
+        }
     } else {
         println!("Gonna be a server...");
         server();
