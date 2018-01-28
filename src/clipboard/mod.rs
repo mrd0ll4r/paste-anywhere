@@ -16,7 +16,7 @@ impl Clipboard{
         Ok((Clipboard{x11_clipboard: cb},recvr))
     }
 
-    fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
+    pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
         Ok(self.x11_clipboard.store(
             self.x11_clipboard.setter.atoms.clipboard,
             self.x11_clipboard.setter.atoms.utf8_string,

@@ -24,15 +24,17 @@ fn main(){
     let args: Vec<String> = env::args().collect();
     if args.len() > 1 {
         if args[1].starts_with("clip") {
-            let (mut cb,recv)=Clipboard::init().unwrap();
+            let mut cbi=Clipboard::init().unwrap();
             println!("!-----------------------!");
-            let x=cb.waitForString().unwrap();
-
-            format!("{:?}\n",x);
+            let mut cb=cbi.0;
+            print!("{:?}\n",cb.waitForString().unwrap());
+            print!("{:?}\n","HI");
+            cb.set_contents("DASDA".to_string());
+            print!("{:?}\n",cb.waitForString().unwrap());
             thread::sleep(time::Duration::from_secs(10));
             println!("!-----------------------!");
             let x=cb.waitForString().unwrap();
-            format!("{:?}\n",x);
+            print!("{:?}\n",x);
         }else{
             println!("Gonna be a client...");
             client(8080);
