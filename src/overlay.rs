@@ -60,10 +60,11 @@ impl Peer {
                         clock: new_state.clone(),
                         last_copy_src: state.last_copy_src.clone(),
                     };
-                    println!("peer: updated overlay state to {:?}", o_state);
+                    println!("peer: updated overlay state to {:?}", *o_state);
 
                     drop(o_state);
 
+                    println!("peer: replying with pong");
                     let resp = conn.pong(
                         &CopyClock {
                             clock: new_state,
@@ -71,6 +72,14 @@ impl Peer {
                         },
                         &id_copy,
                     );
+                    if let Err(e) = resp {
+                        println!("peer: unable to reply, closing: {}", e);
+                        conn.close();
+                        close_copy.send(());
+                        println!("peer: closed");
+                        return;
+                    }
+                    println!("peer: reply successful");
                 }
                 MessageType::Pong { state } => {
                     println!("peer: received pong with state: {:?}", state);
@@ -81,7 +90,7 @@ impl Peer {
                         clock: new_state.clone(),
                         last_copy_src: state.last_copy_src.clone(),
                     };
-                    println!("peer: updated overlay state to {:?}", o_state);
+                    println!("peer: updated overlay state to {:?}", *o_state);
                 }
                 MessageType::CopyNotification { state } => {
                     println!(
@@ -417,7 +426,13 @@ impl Overlay {
 
                 match incoming.conn {
                     Connection::P2P(mut c) => {
-                        Overlay::handle_p2p_connection(c, own_id.clone(), state.clone());
+                        Overlay::handle_p2p_connection(
+                            c,
+                            own_id.clone(),
+                            incoming.first_msg.src_id.clone(),
+                            peers.clone(),
+                            state.clone(),
+                        );
                     }
                     Connection::Copy(mut c) => {
                         Overlay::handle_copy_connection(
@@ -478,16 +493,25 @@ impl Overlay {
         });
     }
 
-    fn handle_p2p_connection(mut c: P2PConnection, own_id: PeerID, state: Arc<Mutex<CopyClock>>) {
-        // TODO add to own peers
-        thread::spawn(move || loop {
-            let msg = c.read_message();
-            match msg {
-                Ok(m) => println!("received: {:?}", m),
-                Err(e) => {
-                    println!("unable to read: {}", e);
-                    return;
-                }
+    fn handle_p2p_connection(
+        mut c: P2PConnection,
+        own_id: PeerID,
+        remote_id: PeerID,
+        peers: Arc<Mutex<HashMap<Endpoint, Peer>>>,
+        state: Arc<Mutex<CopyClock>>,
+    ) {
+        thread::spawn(move || {
+            // TODO update state
+            let peer = Peer::new(c, own_id, state.clone());
+            if let Err(e) = peer {
+                println!("<-p2p: unable to construct peer: {}", e);
+                return;
+            }
+            let peer = peer.unwrap();
+
+            {
+                let mut peers = peers.lock().unwrap();
+                peers.insert(remote_id, peer);
             }
         });
     }
