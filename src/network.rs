@@ -190,7 +190,7 @@ impl Connection {
     }
 }
 
-#[derive(Debug, PartialOrd, PartialEq)]
+#[derive(Debug, PartialOrd, PartialEq, Clone)]
 pub enum Direction {
     Incoming,
     Outgoing,
@@ -422,6 +422,14 @@ impl P2PConnection {
         P2PConnection::connect(remote, msg)
     }
 
+    pub fn dup(&self) -> Result<P2PConnection, Box<Error>> {
+        let conn = self.conn.try_clone()?;
+        Ok(P2PConnection {
+            conn: conn,
+            dir: self.dir.clone(),
+        })
+    }
+
     pub fn ping(&mut self, state: &CopyClock, local: &Endpoint) -> Result<(), Box<Error>> {
         let msg = Message {
             message_id: generate_message_id(),
@@ -463,6 +471,28 @@ impl P2PConnection {
             src_id: local.clone(),
             ttl: 1,
             hop_count: 0,
+        };
+
+        write_length_prefixed(&mut self.conn, &msg)?;
+
+        Ok(())
+    }
+
+    pub fn forward_notify_copy(
+        &mut self,
+        state: &CopyClock,
+        local: &Endpoint,
+        ttl: u32,
+        hop_count: u32,
+    ) -> Result<(), Box<Error>> {
+        let msg = Message {
+            message_id: generate_message_id(), // TODO reuse message_id from incoming message
+            message_type: MessageType::CopyNotification {
+                state: state.clone(),
+            },
+            src_id: local.clone(),
+            ttl: ttl,
+            hop_count: hop_count,
         };
 
         write_length_prefixed(&mut self.conn, &msg)?;

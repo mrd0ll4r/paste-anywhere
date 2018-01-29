@@ -1,3 +1,5 @@
+#![feature(mpsc_select)]
+
 extern crate byteorder;
 extern crate rand;
 extern crate serde;

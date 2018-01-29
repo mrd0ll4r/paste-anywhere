@@ -4,16 +4,183 @@ use std::net::Ipv4Addr;
 use std::error::Error;
 use std::thread;
 use std::collections::HashMap;
+use std::sync::mpsc::*;
 
 use clock::VectorClock;
 use network::*;
+
+#[derive(Clone, Debug)]
+enum P2PSend {
+    Ping(CopyClock),
+    CopyNotification(CopyClock),
+    ForwardCopyNotification(CopyClock, u32, u32),
+}
+
+#[derive(Debug)]
+struct Peer {
+    sender: SyncSender<P2PSend>,
+    closer: SyncSender<()>,
+}
+
+impl Peer {
+    fn new(
+        mut conn: P2PConnection,
+        own_id: PeerID,
+        overlay_state: Arc<Mutex<CopyClock>>,
+    ) -> Result<Peer, Box<Error>> {
+        let mut conn2 = conn.dup()?;
+        let (send_tx, send_rx) = sync_channel(0);
+        let (close_tx, close_rx) = sync_channel(0);
+        let close_copy = close_tx.clone();
+        let send_copy = send_tx.clone();
+        let id_copy = own_id.clone();
+
+        thread::spawn(move || loop {
+            let msg = conn.read_message();
+            if let Err(e) = msg {
+                print!("peer: unable to read, closing: {}", e);
+                conn.close();
+                close_copy.send(());
+                println!("peer: closed");
+                return;
+            }
+            let msg = msg.unwrap();
+            match msg.message_type {
+                MessageType::Ping { state } => {
+                    println!("peer: received ping with state: {:?}", state);
+                    let mut o_state = overlay_state.lock().unwrap();
+                    let new_state = o_state.clock.merge_with(&state.clock);
+                    *o_state = CopyClock {
+                        clock: new_state.clone(),
+                        last_copy_src: state.last_copy_src.clone(),
+                    };
+                    println!("peer: updated overlay state to {:?}", o_state);
+
+                    drop(o_state);
+
+                    let resp = conn.pong(
+                        &CopyClock {
+                            clock: new_state,
+                            last_copy_src: state.last_copy_src,
+                        },
+                        &id_copy,
+                    );
+                }
+                MessageType::Pong { state } => {
+                    println!("peer: received pong with state: {:?}", state);
+                    let mut o_state = overlay_state.lock().unwrap();
+                    let new_state = o_state.clock.merge_with(&state.clock);
+                    *o_state = CopyClock {
+                        clock: new_state.clone(),
+                        last_copy_src: state.last_copy_src.clone(),
+                    };
+                    println!("peer: updated overlay state to {:?}", o_state);
+                }
+                MessageType::CopyNotification { state } => {
+                    println!(
+                        "peer: received copy notification with state: {:?}, ttl: {}",
+                        state, msg.ttl
+                    );
+                    // TODO implement me
+                }
+                _ => {
+                    println!("peer: received invalid message: {:?}", msg);
+                    conn.close();
+                    close_copy.send(());
+                    println!("peer: closed");
+                    return;
+                }
+            }
+        });
+
+        thread::spawn(move || loop {
+            select! {
+                msg = send_rx.recv() => {
+                    let msg = msg.unwrap();
+                    println!("peer: received data to send: {:?}",msg);
+                    match msg {
+                        P2PSend::Ping(clock) => {
+                            let resp = conn2.ping(&clock,&own_id);
+                            if let Err(e) = resp {
+                                println!("peer: unable to send, closing: {}",e);
+                                conn2.close();
+                                drop(send_rx); // TODO do we need this?
+                                drop(close_rx); // TODO same
+                                return
+                            }
+                        },
+                        P2PSend::CopyNotification(clock) => {
+                            let resp = conn2.notify_copy(&clock,&own_id);
+                            if let Err(e) = resp {
+                                println!("peer: unable to send, closing: {}",e);
+                                conn2.close();
+                                drop(send_rx); // TODO do we need this?
+                                drop(close_rx); // TODO same
+                                return
+                            }
+                        },
+                        P2PSend::ForwardCopyNotification(clock,ttl,hop_count) => {
+                            let resp = conn2.forward_notify_copy(&clock,&own_id,ttl,hop_count);
+                            if let Err(e) = resp {
+                                println!("peer: unable to send, closing: {}",e);
+                                conn2.close();
+                                drop(send_rx); // TODO do we need this?
+                                drop(close_rx); // TODO same
+                                return
+                            }
+                        }
+                    }
+                    println!("peer: send successful");
+                },
+                _ = close_rx.recv() => {
+                    println!("peer: received close signal");
+                    conn2.close();
+                    drop(send_rx); // TODO do we need this?
+                    drop(close_rx); // TODO same
+                    return
+                }
+            }
+        });
+
+        Ok(Peer {
+            sender: send_tx,
+            closer: close_tx,
+        })
+    }
+
+    fn ping(&self, state: CopyClock) -> Result<(), Box<Error>> {
+        self.sender.send(P2PSend::Ping(state))?;
+        Ok(())
+    }
+
+    fn notify_copy(&self, state: CopyClock) -> Result<(), Box<Error>> {
+        self.sender.send(P2PSend::CopyNotification(state))?;
+        Ok(())
+    }
+
+    fn forward_notify_copy(
+        &self,
+        state: CopyClock,
+        ttl: u32,
+        hop_count: u32,
+    ) -> Result<(), Box<Error>> {
+        self.sender
+            .send(P2PSend::ForwardCopyNotification(state, ttl, hop_count))?;
+        Ok(())
+    }
+
+    fn close(&self) -> Result<(), Box<Error>> {
+        self.closer.send(())?;
+        Ok(())
+    }
+}
 
 pub struct Overlay {
     own_id: PeerID,
     sock: Arc<Mutex<TcpListener>>,
     bootstrap_ids: Vec<PeerID>,
     available_ids: Mutex<Vec<PeerID>>,
-    connected_peers: Arc<Mutex<HashMap<PeerID, ()>>>,
+    connected_peers: Arc<Mutex<HashMap<PeerID, Peer>>>,
     // TODO have state, clipboard in one mutex
     state: Arc<Mutex<CopyClock>>,
     clipboard: Arc<Mutex<String>>,
@@ -231,7 +398,7 @@ impl Overlay {
 
     fn handle_join_connection(
         mut c: JoinConnection,
-        peers: Arc<Mutex<HashMap<PeerID, ()>>>,
+        peers: Arc<Mutex<HashMap<PeerID, Peer>>>,
         own_id: PeerID,
         msg: Message,
         seen_message_ids: Arc<Mutex<HashMap<MessageID, ()>>>,
