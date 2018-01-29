@@ -29,6 +29,7 @@ fn main() {
         let o = Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), Vec::new()).unwrap();
 
         o.start_accepting();
+        o.start_autoping();
 
         println!("performing join...");
         let join = o.perform_join();
@@ -70,6 +71,7 @@ fn main() {
     let o = Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), bootstrap_peers).unwrap();
 
     o.start_accepting();
+    o.start_autoping();
 
     println!("performing join...");
     let join = o.perform_join();

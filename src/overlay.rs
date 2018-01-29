@@ -5,9 +5,13 @@ use std::error::Error;
 use std::thread;
 use std::collections::HashMap;
 use std::sync::mpsc::*;
+use std::time;
 
 use clock::VectorClock;
 use network::*;
+
+use rand;
+use rand::Rng;
 
 #[derive(Clone, Debug)]
 enum P2PSend {
@@ -38,7 +42,7 @@ impl Peer {
         thread::spawn(move || loop {
             let msg = conn.read_message();
             if let Err(e) = msg {
-                print!("peer: unable to read, closing: {}", e);
+                println!("peer: unable to read, closing: {}", e);
                 conn.close();
                 close_copy.send(());
                 println!("peer: closed");
@@ -107,8 +111,8 @@ impl Peer {
                             if let Err(e) = resp {
                                 println!("peer: unable to send, closing: {}",e);
                                 conn2.close();
-                                drop(send_rx); // TODO do we need this?
-                                drop(close_rx); // TODO same
+                                //drop(send_rx); // TODO do we need this?
+                                //drop(close_rx); // TODO same
                                 return
                             }
                         },
@@ -117,8 +121,8 @@ impl Peer {
                             if let Err(e) = resp {
                                 println!("peer: unable to send, closing: {}",e);
                                 conn2.close();
-                                drop(send_rx); // TODO do we need this?
-                                drop(close_rx); // TODO same
+                                //drop(send_rx); // TODO do we need this?
+                                //drop(close_rx); // TODO same
                                 return
                             }
                         },
@@ -127,8 +131,8 @@ impl Peer {
                             if let Err(e) = resp {
                                 println!("peer: unable to send, closing: {}",e);
                                 conn2.close();
-                                drop(send_rx); // TODO do we need this?
-                                drop(close_rx); // TODO same
+                                //drop(send_rx); // TODO do we need this?
+                                //drop(close_rx); // TODO same
                                 return
                             }
                         }
@@ -138,8 +142,8 @@ impl Peer {
                 _ = close_rx.recv() => {
                     println!("peer: received close signal");
                     conn2.close();
-                    drop(send_rx); // TODO do we need this?
-                    drop(close_rx); // TODO same
+                    //drop(send_rx); // TODO do we need this?
+                    //drop(close_rx); // TODO same
                     return
                 }
             }
@@ -351,6 +355,48 @@ impl Overlay {
         }
 
         Ok(())
+    }
+
+    pub fn start_autoping(&self) {
+        let peers = self.connected_peers.clone();
+        let own_id = self.own_id.clone();
+        let state = self.state.clone();
+        thread::spawn(move || {
+            thread::sleep_ms(rand::thread_rng().gen_range(1000, 5000));
+            loop {
+                {
+                    let mut p: Vec<Endpoint> = Vec::new();
+                    let mut peers_to_remove: Vec<Endpoint> = Vec::new();
+                    let mut peers = peers.lock().unwrap();
+                    for peer in peers.keys() {
+                        p.push(peer.clone());
+                    }
+                    println!("ping: sending ping to these peers: {:?}", p);
+
+                    for i in 0..p.len() {
+                        let peer = peers.get(&p[i]).unwrap();
+
+                        println!("ping: sending ping to {:?}", p[i]);
+                        let resp = peer.ping(state.lock().unwrap().clone());
+                        if let Err(e) = resp {
+                            println!("ping: unable to send, removing peer: {}", e);
+                            peer.close();
+                            peers_to_remove.push(p[i].clone());
+                            continue;
+                        }
+                        println!("ping: ping successful");
+                    }
+
+                    for i in 0..peers_to_remove.len() {
+                        peers.remove(&peers_to_remove[i]);
+                    }
+                }
+
+                println!("ping: done pinging all peers, sleeping");
+
+                thread::sleep(time::Duration::new(10, 0));
+            }
+        });
     }
 
     pub fn start_accepting(&self) {
