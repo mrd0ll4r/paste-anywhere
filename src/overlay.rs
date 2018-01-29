@@ -45,9 +45,11 @@ impl Peer {
                 return;
             }
             let msg = msg.unwrap();
+            // TODO maybe move this to another thread? I smell a deadlock from ping-ponging copy notifications...
             match msg.message_type {
                 MessageType::Ping { state } => {
                     println!("peer: received ping with state: {:?}", state);
+                    // TODO actually check if this new clock supersedes our clock
                     let mut o_state = overlay_state.lock().unwrap();
                     let new_state = o_state.clock.merge_with(&state.clock);
                     *o_state = CopyClock {
@@ -68,6 +70,7 @@ impl Peer {
                 }
                 MessageType::Pong { state } => {
                     println!("peer: received pong with state: {:?}", state);
+                    // TODO actually check if this new clock supersedes our clock
                     let mut o_state = overlay_state.lock().unwrap();
                     let new_state = o_state.clock.merge_with(&state.clock);
                     *o_state = CopyClock {
@@ -191,6 +194,7 @@ impl Overlay {
     pub fn new(addr: &Ipv4Addr, bootstrap_peers: Vec<PeerID>) -> Result<Overlay, Box<Error>> {
         let sock = TcpListener::bind((addr.clone(), 0 as u16))?;
         let local = sock.local_addr()?;
+        println!("overlay: bound to address {}", local);
 
         Ok(Overlay {
             own_id: PeerID::new(&addr, local.port()),
@@ -211,25 +215,41 @@ impl Overlay {
         let mut current = self.clipboard.lock().unwrap();
         *current = clipboard.clone();
 
-        // TODO increment state
+        let mut overlay_state = self.state.lock().unwrap();
+        *overlay_state = CopyClock {
+            clock: overlay_state.clock.incr_clone(self.own_id.clone()),
+            last_copy_src: self.own_id.clone(),
+        };
+        let state = overlay_state.clone();
+        drop(overlay_state);
+
         // TODO send out copy notifications
 
         Ok(())
     }
 
     pub fn get_clipboard(&self) -> Result<String, Box<Error>> {
-        let state = self.state.lock().unwrap().clone();
-        if state.last_copy_src.eq(&self.own_id) {
+        let overlay_state = self.state.lock().unwrap().clone();
+        if overlay_state.last_copy_src.eq(&self.own_id) {
             return Ok(self.clipboard.lock().unwrap().clone());
         }
 
-        let mut conn =
-            CopyConnection::open(&self.own_id, &state.last_copy_src, 8, &"text".to_string())?;
+        let mut conn = CopyConnection::open(
+            &self.own_id,
+            &overlay_state.last_copy_src,
+            8,
+            &"text".to_string(),
+        )?;
 
         let msg = conn.read_message()?;
 
         if let MessageType::ErrorResponse { state, error } = msg.message_type {
-            // TODO update state
+            // TODO actually check if this new clock supersedes our clock
+            let mut overlay_state = self.state.lock().unwrap();
+            *overlay_state = CopyClock {
+                clock: overlay_state.clock.merge_with(&state.clock),
+                last_copy_src: state.last_copy_src,
+            };
             return Err(From::from(format!("remote  replied with error: {}", error)));
         }
         if let MessageType::TextResponse { text } = msg.message_type {
@@ -272,7 +292,7 @@ impl Overlay {
         }
     }
 
-    pub fn perform_join(&mut self) -> Result<(), Box<Error>> {
+    pub fn perform_join(&self) -> Result<(), Box<Error>> {
         // TODO make this  parallel
         // TODO only take n peers for this, not all of them
         for i in 0..self.bootstrap_ids.len() {
@@ -294,12 +314,41 @@ impl Overlay {
         let mut available = self.available_ids.lock().unwrap();
         available.as_mut_slice().sort();
         available.dedup();
-        println!("->join: got these peers: {:?}", available);
+        println!("->join: got these peers: {:?}", *available);
         if available.len() == 0 {
             return Err(From::from("I know no peers"));
         }
 
-        // TODO establish P2P connections with these peers
+        let state = self.state.lock().unwrap().clone();
+
+        // Establish P2P connections with a bunch of peers
+        {
+            let mut peers = self.connected_peers.lock().unwrap();
+
+            // TODO only take a bunch of peers, not all of them
+            for i in 0..available.len() {
+                let p = available[i];
+                println!("->join: building p2p connection to peer at {:?}", p);
+                let mut p2p_conn = P2PConnection::open(&self.own_id, &p, 8, &state);
+                if let Err(e) = p2p_conn {
+                    println!("->join: unable to open connection: {}", e);
+                    continue;
+                }
+                let mut p2p_conn = p2p_conn.unwrap();
+                let peer = Peer::new(p2p_conn, self.own_id.clone(), self.state.clone());
+                if let Err(e) = peer {
+                    println!("->join: unable to construct peer: {}", e);
+                    continue;
+                }
+                let peer = peer.unwrap();
+                peers.insert(p.clone(), peer);
+                println!("->join: p2p connection successful");
+            }
+
+            if peers.len() == 0 {
+                return Err(From::from("Not connected to any peers"));
+            }
+        }
 
         Ok(())
     }
@@ -384,6 +433,7 @@ impl Overlay {
     }
 
     fn handle_p2p_connection(mut c: P2PConnection, own_id: PeerID, state: Arc<Mutex<CopyClock>>) {
+        // TODO add to own peers
         thread::spawn(move || loop {
             let msg = c.read_message();
             match msg {
@@ -479,7 +529,12 @@ impl Overlay {
                 }
             }
 
-            println!("<-join: done forwarding, closing");
+            println!("<-join: done forwarding, responding with own ID");
+            let resp = c.respond(&own_id, &msg);
+            match resp {
+                Ok(_) => println!("<-join: reply successful"),
+                Err(e) => println!("<-join: unable to reply: {}", e),
+            }
             c.close();
         });
     }
