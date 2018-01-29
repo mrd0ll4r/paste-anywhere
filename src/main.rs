@@ -22,88 +22,60 @@ use std::thread;
 use std::time;
 use clipboard::Clipboard;
 
-fn main(){
+fn main() {
     let args: Vec<String> = env::args().collect();
-    if args.len() > 1 {
+
+    if args.len() == 1 {
         if args[1].starts_with("clip") {
-            let mut cbi=Clipboard::init().unwrap();
+            let mut cbi = Clipboard::init().unwrap();
             println!("!-----------------------!");
-            let mut cb=cbi.0;
-            print!("{:?}\n",cb.waitForString().unwrap());
-            print!("{:?}\n","HI");
+            let mut cb = cbi.0;
+            print!("{:?}\n", cb.waitForString().unwrap());
+            print!("{:?}\n", "HI");
             cb.set_contents("DASDA".to_string());
-            print!("{:?}\n",cb.waitForString().unwrap());
+            print!("{:?}\n", cb.waitForString().unwrap());
             thread::sleep(time::Duration::from_secs(10));
             println!("!-----------------------!");
-            let x=cb.waitForString().unwrap();
-            print!("{:?}\n",x);
-        }else{
-            println!("Gonna be a client...");
-            client(8080);
+            let x = cb.waitForString().unwrap();
+            print!("{:?}\n", x);
+            return;
         }
-    } else {
-        println!("Gonna be a server...");
-        server();
+        let o = Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), Vec::new()).unwrap();
+
+        o.start_accepting();
+
+        println!("performing join...");
+        let join = o.perform_join();
+        if let Err(e) = join {
+            println!("join failed: {}", e);
+        }
+
+        println!("going to sleep...");
+        thread::sleep(time::Duration::new(60 * 60, 0));
     }
-}
 
-fn server() {
-    let host = "127.0.0.1";
-    let port = 8080;
-
-    let mut sock = TcpListener::bind((host, port)).unwrap();
-    println!("Listening..");
-
-    loop {
-        let mut incoming = network::accept(&mut sock).unwrap();
-        println!("Got connection!");
-
-        println!("{:?}", incoming.first_msg);
-        println!("{:?}", incoming.conn);
-
-        thread::spawn(move || loop {
-            let msg = incoming.conn.read_message();
-            match msg {
-                Ok(m) => println!("received: {:?}", m),
-                Err(e) => {
-                    println!("unable to read: {}", e);
-                    return;
-                }
-            }
-        });
+    let mut bootstrap_peers: Vec<Endpoint> = Vec::new();
+    for i in 1..args.len() {
+        let p = &args[i];
+        let addr: SocketAddr = p.parse().unwrap();
+        if !addr.is_ipv4() {
+            panic!("address is not IPv4")
+        }
+        if let SocketAddr::V4(v4) = addr {
+            bootstrap_peers.push(Endpoint::new(v4.ip(), v4.port()));
+        }
     }
-}
 
-fn client(port: u16) {
-    let state = CopyClock::new(
-        &VectorClock::new(),
-        &PeerID::new(&Ipv4Addr::new(127, 0, 0, 1), 12345),
-    );
+    let o = Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), bootstrap_peers).unwrap();
 
-    let local = PeerID::new(&Ipv4Addr::new(127, 0, 0, 1), 12345);
-    let remote = PeerID::new(&Ipv4Addr::new(127, 0, 0, 1), port);
+    o.start_accepting();
 
-    let mut join_conn = JoinConnection::open(&local, &remote, 8).unwrap();
-    println!("Connected Join...");
-    join_conn.close().unwrap();
-    println!("Closed Join...");
+    println!("performing join...");
+    let join = o.perform_join();
+    if let Err(e) = join {
+        println!("join failed: {}", e);
+    }
 
-    thread::sleep_ms(500);
-
-    let mut p2p_conn = P2PConnection::open(&local, &remote, 8, &state).unwrap();
-    println!("Connected p2p...");
-    p2p_conn.notify_copy(&state, &local).unwrap();
-    p2p_conn.ping(&state, &local).unwrap();
-    p2p_conn.pong(&state, &local).unwrap();
-    p2p_conn.close().unwrap();
-    println!("Closed p2p...");
-
-    thread::sleep_ms(500);
-
-    let mut copy_conn = CopyConnection::open(&local, &remote, 8, &"text".to_string()).unwrap();
-    println!("Connected Copy...");
-    copy_conn.close().unwrap();
-    println!("Closed copy...");
-
-    println!("Done!")
+    println!("going to sleep...");
+    thread::sleep(time::Duration::new(60 * 60, 0));
 }
