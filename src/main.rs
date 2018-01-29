@@ -26,20 +26,6 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() == 1 {
-        if args[1].starts_with("clip") {
-            let mut cbi = Clipboard::init().unwrap();
-            println!("!-----------------------!");
-            let mut cb = cbi.0;
-            print!("{:?}\n", cb.waitForString().unwrap());
-            print!("{:?}\n", "HI");
-            cb.set_contents("DASDA".to_string());
-            print!("{:?}\n", cb.waitForString().unwrap());
-            thread::sleep(time::Duration::from_secs(10));
-            println!("!-----------------------!");
-            let x = cb.waitForString().unwrap();
-            print!("{:?}\n", x);
-            return;
-        }
         let o = Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), Vec::new()).unwrap();
 
         o.start_accepting();
@@ -52,6 +38,21 @@ fn main() {
 
         println!("going to sleep...");
         thread::sleep(time::Duration::new(60 * 60, 0));
+    }
+
+    if args[1].starts_with("clip") {
+        let mut cbi = Clipboard::init().unwrap();
+        println!("!-----------------------!");
+        let mut cb = cbi.0;
+        print!("{:?}\n", cb.waitForString().unwrap());
+        print!("{:?}\n", "HI");
+        cb.set_contents("DASDA".to_string());
+        print!("{:?}\n", cb.waitForString().unwrap());
+        thread::sleep(time::Duration::from_secs(10));
+        println!("!-----------------------!");
+        let x = cb.waitForString().unwrap();
+        print!("{:?}\n", x);
+        return;
     }
 
     let mut bootstrap_peers: Vec<Endpoint> = Vec::new();
