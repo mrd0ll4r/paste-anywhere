@@ -6,6 +6,7 @@ use std::io;
 use std::net::TcpStream;
 use std::net::SocketAddr;
 use std::io::Write;
+use std::str::FromStr;
 
 use rand;
 use rand::Rng;
@@ -31,10 +32,39 @@ impl CopyClock {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, Ord, PartialOrd, PartialEq, Eq, Hash, Copy, Clone)]
+#[derive(Debug, Ord, PartialOrd, PartialEq, Eq, Hash, Copy, Clone)]
 pub struct Endpoint {
     ip: net::Ipv4Addr,
     port: u16,
+}
+
+impl serde::Serialize for Endpoint {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let s = format!("{}:{}", self.ip, self.port);
+        serializer.serialize_str(&s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Endpoint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+
+        // TODO maybe fix this
+        let addr = SocketAddr::from_str(&s).unwrap();
+        match addr {
+            SocketAddr::V6(_) => panic!("deserialized IPv6 address for endpoint?"),
+            SocketAddr::V4(v4) => Ok(Endpoint {
+                ip: v4.ip().clone(),
+                port: v4.port(),
+            }),
+        }
+    }
 }
 
 impl Endpoint {
