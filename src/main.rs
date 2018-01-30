@@ -37,6 +37,12 @@ fn main() {
             println!("join failed: {}", e);
         }
 
+        for i in 0..100 {
+            thread::sleep(time::Duration::new(17, i * 1000 * 1000 * 10));
+            println!("setting clipboard...");
+            o.set_clipboard(&"first".to_string());
+        }
+
         println!("going to sleep...");
         thread::sleep(time::Duration::new(60 * 60, 0));
     }
@@ -77,6 +83,12 @@ fn main() {
     let join = o.perform_join();
     if let Err(e) = join {
         println!("join failed: {}", e);
+    }
+
+    for i in 0..100 {
+        thread::sleep(time::Duration::new(19, i * 1000 * 1000 * 10));
+        println!("setting clipboard...");
+        o.set_clipboard(&"not first".to_string());
     }
 
     println!("going to sleep...");
