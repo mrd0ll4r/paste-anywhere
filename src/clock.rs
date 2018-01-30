@@ -81,6 +81,21 @@ impl<HostType: Clone + Hash + Eq + Ord + Debug> VectorClock<HostType> {
         own_keys.as_mut_slice().sort();
         other_keys.as_mut_slice().sort();
 
+        // Comparing vectors also compares their length, but only after comparing each element.
+        // We move comparing the length before comparing the elements to avoid situations like:
+        // - clock 1: [[B:1],[C:2],[D:1],[A:2]]
+        // - clock 2: [[B:1],[C:2],[E:1]]
+        // Using just vector comparison would order clock 1 < clock 2 (because the vectors are
+        // sorted and A<B). Although these two are really concurrent and we can't enforce an order,
+        // it looks like clock 1 should be ordered "greater than" clock 2, just because it captured
+        // more events. This is arbitrary, one could decide not to follow this approach, but it felt
+        // more natural to us.
+        if own_keys.len() > other_keys.len() {
+            return true;
+        } else if other_keys.len() > own_keys.len() {
+            return false;
+        }
+
         let ord = own_keys.cmp(&other_keys);
 
         match ord {
