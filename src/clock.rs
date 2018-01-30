@@ -102,8 +102,25 @@ impl<HostType: Clone + Hash + Eq + Ord + Debug> VectorClock<HostType> {
             Ordering::Less => false,
             Ordering::Greater => true,
             Ordering::Equal => {
-                println!("self clock: {:?}, other clock: {:?}", self, other);
-                panic!("concurrent clocks are equal?")
+                // they have the same keys, just values are different.
+                println!(
+                    "clock: vector resolution failed: self clock: {:?}, other clock: {:?}",
+                    self, other
+                );
+
+                for i in 0..own_keys.len() {
+                    let own_val = self.entries.get(&own_keys[i]).unwrap();
+                    let other_val = other.entries.get(&own_keys[i]).unwrap();
+                    if own_val == other_val {
+                        continue;
+                    } else if own_val > other_val {
+                        return true;
+                    } else if own_val < other_val {
+                        return false;
+                    }
+                }
+
+                panic!("unable to resolve concurrent clocks");
             }
         }
     }
@@ -191,6 +208,28 @@ mod test {
         assert_eq!(
             c2.temporal_relation(&c1),
             TemporalRelation::ConcurrentGreater
+        );
+    }
+
+    #[test]
+    fn test_complex_concurrent() {
+        let base = StrVectorClock::new();
+        let mut c1 = base.incr_clone("A");
+        let mut c2 = base.incr_clone("B");
+        c1.incr("A");
+        c1.incr("B");
+        c2.incr("A");
+        c2.incr("B");
+
+        assert!(!(c1 == c2));
+
+        assert_eq!(
+            c1.temporal_relation(&c2),
+            TemporalRelation::ConcurrentGreater
+        );
+        assert_eq!(
+            c2.temporal_relation(&c1),
+            TemporalRelation::ConcurrentSmaller
         );
     }
 
