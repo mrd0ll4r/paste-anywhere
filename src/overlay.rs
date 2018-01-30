@@ -8,6 +8,7 @@ use std::sync::mpsc::*;
 use std::time;
 
 use clock::VectorClock;
+use clock::TemporalRelation;
 use network::*;
 
 use rand;
@@ -18,6 +19,25 @@ enum P2PSend {
     Ping(CopyClock),
     CopyNotification(CopyClock),
     ForwardCopyNotification(CopyClock, u32, u32),
+}
+
+fn update_state(overlay_state: Arc<Mutex<CopyClock>>, new_state: CopyClock) -> CopyClock {
+    let mut overlay_state = overlay_state.lock().unwrap();
+    let ord = overlay_state.clock.temporal_relation(&new_state.clock);
+
+    match ord {
+        TemporalRelation::Equal => overlay_state.clone(),
+        TemporalRelation::EffectOf => overlay_state.clone(),
+        TemporalRelation::Caused => {
+            *overlay_state = new_state;
+            overlay_state.clone()
+        }
+        TemporalRelation::ConcurrentGreater => overlay_state.clone(),
+        TemporalRelation::ConcurrentSmaller => {
+            *overlay_state = new_state;
+            overlay_state.clone()
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -53,25 +73,11 @@ impl Peer {
             match msg.message_type {
                 MessageType::Ping { state } => {
                     println!("peer: received ping with state: {:?}", state);
-                    // TODO actually check if this new clock supersedes our clock
-                    let mut o_state = overlay_state.lock().unwrap();
-                    let new_state = o_state.clock.merge_with(&state.clock);
-                    *o_state = CopyClock {
-                        clock: new_state.clone(),
-                        last_copy_src: state.last_copy_src.clone(),
-                    };
-                    println!("peer: updated overlay state to {:?}", *o_state);
-
-                    drop(o_state);
+                    let new_state = update_state(overlay_state.clone(), state);
+                    println!("peer: updated overlay state to {:?}", new_state);
 
                     println!("peer: replying with pong");
-                    let resp = conn.pong(
-                        &CopyClock {
-                            clock: new_state,
-                            last_copy_src: state.last_copy_src,
-                        },
-                        &id_copy,
-                    );
+                    let resp = conn.pong(&new_state, &id_copy);
                     if let Err(e) = resp {
                         println!("peer: unable to reply, closing: {}", e);
                         conn.close();
@@ -83,14 +89,8 @@ impl Peer {
                 }
                 MessageType::Pong { state } => {
                     println!("peer: received pong with state: {:?}", state);
-                    // TODO actually check if this new clock supersedes our clock
-                    let mut o_state = overlay_state.lock().unwrap();
-                    let new_state = o_state.clock.merge_with(&state.clock);
-                    *o_state = CopyClock {
-                        clock: new_state.clone(),
-                        last_copy_src: state.last_copy_src.clone(),
-                    };
-                    println!("peer: updated overlay state to {:?}", *o_state);
+                    let new_state = update_state(overlay_state.clone(), state);
+                    println!("peer: updated overlay state to {:?}", new_state);
                 }
                 MessageType::CopyNotification { state } => {
                     println!(
@@ -120,8 +120,6 @@ impl Peer {
                             if let Err(e) = resp {
                                 println!("peer: unable to send, closing: {}",e);
                                 conn2.close();
-                                //drop(send_rx); // TODO do we need this?
-                                //drop(close_rx); // TODO same
                                 return
                             }
                         },
@@ -130,8 +128,6 @@ impl Peer {
                             if let Err(e) = resp {
                                 println!("peer: unable to send, closing: {}",e);
                                 conn2.close();
-                                //drop(send_rx); // TODO do we need this?
-                                //drop(close_rx); // TODO same
                                 return
                             }
                         },
@@ -140,8 +136,6 @@ impl Peer {
                             if let Err(e) = resp {
                                 println!("peer: unable to send, closing: {}",e);
                                 conn2.close();
-                                //drop(send_rx); // TODO do we need this?
-                                //drop(close_rx); // TODO same
                                 return
                             }
                         }
@@ -151,8 +145,6 @@ impl Peer {
                 _ = close_rx.recv() => {
                     println!("peer: received close signal");
                     conn2.close();
-                    //drop(send_rx); // TODO do we need this?
-                    //drop(close_rx); // TODO same
                     return
                 }
             }
@@ -234,7 +226,9 @@ impl Overlay {
             last_copy_src: self.own_id.clone(),
         };
         let state = overlay_state.clone();
+        println!("set_clipboard: set state to {:?}", state);
         drop(overlay_state);
+        drop(current);
 
         // TODO send out copy notifications
 
@@ -257,12 +251,12 @@ impl Overlay {
         let msg = conn.read_message()?;
 
         if let MessageType::ErrorResponse { state, error } = msg.message_type {
-            // TODO actually check if this new clock supersedes our clock
-            let mut overlay_state = self.state.lock().unwrap();
-            *overlay_state = CopyClock {
-                clock: overlay_state.clock.merge_with(&state.clock),
-                last_copy_src: state.last_copy_src,
-            };
+            println!(
+                "->copy: received error response, err: {}, state: {:?}",
+                error, state
+            );
+            let new_state = update_state(self.state.clone(), state);
+            println!("->copy: updated own state to {:?}", new_state);
             return Err(From::from(format!("remote  replied with error: {}", error)));
         }
         if let MessageType::TextResponse { text } = msg.message_type {
@@ -509,10 +503,8 @@ impl Overlay {
             }
             let peer = peer.unwrap();
 
-            {
-                let mut peers = peers.lock().unwrap();
-                peers.insert(remote_id, peer);
-            }
+            let mut peers = peers.lock().unwrap();
+            peers.insert(remote_id, peer);
         });
     }
 
