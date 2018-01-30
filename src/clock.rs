@@ -1,8 +1,10 @@
 use std::hash::Hash;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::cmp::Ordering;
+use std::fmt::Debug;
 
-// This is the taken from vectorclock-rs.
+// This is the vector-clock implementation taken from vectorclock-rs.
 // Some things are cleaned up, some things were added, some removed.
 // We have to copy it here to implement Serialize and Deserialize.
 
@@ -16,11 +18,11 @@ pub enum TemporalRelation {
 }
 
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
-pub struct VectorClock<HostType: Hash + Eq + Clone> {
+pub struct VectorClock<HostType: Hash + Eq + Clone + Ord + Debug> {
     entries: HashMap<HostType, u64>,
 }
 
-impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
+impl<HostType: Clone + Hash + Eq + Ord + Debug> VectorClock<HostType> {
     pub fn new() -> VectorClock<HostType> {
         VectorClock {
             entries: HashMap::new(),
@@ -36,17 +38,10 @@ impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
     /// this is the original implementation of increment, but I think it sucks.
     pub fn incr_clone(&self, host: HostType) -> Self {
         let mut entries = self.entries.clone();
-
-        match entries.entry(host) {
-            Entry::Vacant(e) => {
-                e.insert(1);
-            }
-            Entry::Occupied(mut e) => {
-                let v = *e.get();
-                e.insert(v + 1);
-            }
-        };
-
+        {
+            let mut count = entries.entry(host).or_insert(0);
+            *count += 1;
+        }
         VectorClock { entries }
     }
 
@@ -54,10 +49,10 @@ impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
         if self == other {
             TemporalRelation::Equal
         } else if self.superseded_by(other) {
-            // self caused other
+            // self caused other (smaller than other)
             TemporalRelation::Caused
         } else if other.superseded_by(self) {
-            // self is an effect of other
+            // self is an effect of other (larger than other)
             TemporalRelation::EffectOf
         } else {
             if self.is_greater_concurrent_than(other) {
@@ -71,8 +66,31 @@ impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
     }
 
     fn is_greater_concurrent_than(&self, other: &Self) -> bool {
-        // TODO figure something out - maybe just go through the clocks in order?
-        false
+        let mut own_keys: Vec<HostType> = Vec::new();
+        let mut other_keys: Vec<HostType> = Vec::new();
+
+        {
+            for key in self.entries.keys() {
+                own_keys.push(key.clone());
+            }
+            for key in other.entries.keys() {
+                other_keys.push(key.clone());
+            }
+        }
+
+        own_keys.as_mut_slice().sort();
+        other_keys.as_mut_slice().sort();
+
+        let ord = own_keys.cmp(&other_keys);
+
+        match ord {
+            Ordering::Less => false,
+            Ordering::Greater => true,
+            Ordering::Equal => {
+                println!("self clock: {:?}, other clock: {:?}", self, other);
+                panic!("concurrent clocks are equal?")
+            }
+        }
     }
 
     fn superseded_by(&self, other: &Self) -> bool {
@@ -105,18 +123,9 @@ impl<HostType: Clone + Hash + Eq> VectorClock<HostType> {
         let mut entries = self.entries.clone();
 
         for (host, &other_n) in other.entries.iter() {
-            // TODO clean this up
-            match entries.entry(host.clone()) {
-                Entry::Vacant(e) => {
-                    e.insert(other_n);
-                }
-                Entry::Occupied(mut e) => {
-                    let self_n = *e.get();
-
-                    if other_n > self_n {
-                        e.insert(other_n);
-                    }
-                }
+            let mut a = entries.entry(host.clone()).or_insert(other_n);
+            if other_n > *a {
+                *a = other_n;
             }
         }
 
@@ -152,7 +161,6 @@ mod test {
         assert_eq!(c2.temporal_relation(&c1), TemporalRelation::EffectOf);
     }
 
-    /*
     #[test]
     fn test_diverged() {
         let base = StrVectorClock::new();
@@ -161,9 +169,15 @@ mod test {
 
         assert!(!(c1 == c2));
 
-        assert_eq!(c1.temporal_relation(&c2), TemporalRelation::Concurrent);
-        assert_eq!(c2.temporal_relation(&c1), TemporalRelation::Concurrent);
-    }*/
+        assert_eq!(
+            c1.temporal_relation(&c2),
+            TemporalRelation::ConcurrentSmaller
+        );
+        assert_eq!(
+            c2.temporal_relation(&c1),
+            TemporalRelation::ConcurrentGreater
+        );
+    }
 
     #[test]
     fn test_merged() {
