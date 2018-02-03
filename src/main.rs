@@ -16,6 +16,7 @@ use clock::*;
 use network::*;
 use overlay::*;
 
+use std::sync::Arc;
 use std::net::*;
 use std::env;
 use std::thread;
@@ -26,7 +27,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() == 1 {
-        let o = Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), Vec::new()).unwrap();
+        let o = Arc::new(Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), Vec::new()).unwrap());
 
         o.start_accepting();
         o.start_autoping();
@@ -35,6 +36,21 @@ fn main() {
         let join = o.perform_join();
         if let Err(e) = join {
             println!("join failed: {}", e);
+        }
+
+        {
+            let oo = o.clone();
+            thread::spawn(move || {
+                for i in 0..100 {
+                    thread::sleep(time::Duration::new(17, i * 1000 * 1000 * 10));
+                    println!("getting clipboard...");
+                    let resp = oo.get_clipboard();
+                    match resp {
+                        Err(e) => println!("unable to get clipboard: {}", e),
+                        Ok(content) => println!("clipboard is: {}", content),
+                    };
+                }
+            });
         }
 
         for i in 0..100 {
@@ -74,7 +90,7 @@ fn main() {
         }
     }
 
-    let o = Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), bootstrap_peers).unwrap();
+    let o = Arc::new(Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), bootstrap_peers).unwrap());
 
     o.start_accepting();
     o.start_autoping();
@@ -83,6 +99,21 @@ fn main() {
     let join = o.perform_join();
     if let Err(e) = join {
         println!("join failed: {}", e);
+    }
+
+    {
+        let oo = o.clone();
+        thread::spawn(move || {
+            for i in 0..100 {
+                thread::sleep(time::Duration::new(17, i * 1000 * 1000 * 10));
+                println!("getting clipboard...");
+                let resp = oo.get_clipboard();
+                match resp {
+                    Err(e) => println!("unable to get clipboard: {}", e),
+                    Ok(content) => println!("clipboard is: {}", content),
+                };
+            }
+        });
     }
 
     for i in 0..100 {
