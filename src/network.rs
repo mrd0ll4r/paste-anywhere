@@ -499,7 +499,7 @@ impl P2PConnection {
                 state: state.clone(),
             },
             src_id: local.clone(),
-            ttl: 1,
+            ttl: 8,
             hop_count: 0,
         };
 
