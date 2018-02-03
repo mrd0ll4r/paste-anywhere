@@ -50,6 +50,8 @@ impl Peer {
     fn new(
         mut conn: P2PConnection,
         own_id: PeerID,
+        remote_id: PeerID,
+        peers: Arc<Mutex<HashMap<PeerID, Peer>>>,
         overlay_state: Arc<Mutex<CopyClock>>,
     ) -> Result<Peer, Box<Error>> {
         let mut conn2 = conn.dup()?;
@@ -59,6 +61,7 @@ impl Peer {
         let send_copy = send_tx.clone();
         let id_copy = own_id.clone();
 
+        //read loop
         thread::spawn(move || loop {
             let msg = conn.read_message();
             if let Err(e) = msg {
@@ -97,7 +100,36 @@ impl Peer {
                         "peer: received copy notification with state: {:?}, ttl: {}",
                         state, msg.ttl
                     );
-                    // TODO implement me
+                    let new_state = update_state(overlay_state.clone(), state);
+                    println!("peer: updated overlay state to {:?}", new_state);
+                    if msg.ttl <= 1 {
+                        println!("peer: copy notification ttl is {}, not forwarding", msg.ttl);
+                        continue;
+                    }
+                    // TODO compare message_id against seen message IDs, don't forward
+                    let peers = peers.clone();
+                    let remote_id = remote_id.clone();
+                    let own_id = own_id.clone();
+                    let new_ttl = msg.ttl - 1;
+                    let new_hop_count = msg.hop_count + 1;
+                    thread::spawn(move || {
+                        let peers = peers.lock().unwrap();
+                        for (ep, p) in peers.iter() {
+                            if ep.eq(&remote_id) {
+                                println!("peer: not forwarding copy notification to myself");
+                                continue;
+                            }
+                            println!("peer: forwarding copy notification to peer {:?}", ep);
+
+                            let resp =
+                                p.forward_notify_copy(new_state.clone(), new_ttl, new_hop_count);
+                            if let Err(e) = resp {
+                                println!("peer: unable to forward: {}", e);
+                                continue;
+                            }
+                            println!("peer: forward successful");
+                        }
+                    });
                 }
                 _ => {
                     println!("peer: received invalid message: {:?}", msg);
@@ -109,6 +141,7 @@ impl Peer {
             }
         });
 
+        //write loop
         thread::spawn(move || loop {
             select! {
                 msg = send_rx.recv() => {
@@ -230,17 +263,35 @@ impl Overlay {
         drop(overlay_state);
         drop(current);
 
-        // TODO send out copy notifications
+        {
+            let peers = self.connected_peers.lock().unwrap();
+            for (ep, p) in peers.iter() {
+                println!("set_clipboard: sending notification to peer {:?}", ep);
+
+                let resp = p.notify_copy(state.clone());
+                if let Err(e) = resp {
+                    println!("set_clipboard: unable to send: {}", e);
+                    continue;
+                }
+                println!("set_clipboard: send successful");
+            }
+        }
 
         Ok(())
     }
 
     pub fn get_clipboard(&self) -> Result<String, Box<Error>> {
+        // TODO strictly speaking this is racy
         let overlay_state = self.state.lock().unwrap().clone();
         if overlay_state.last_copy_src.eq(&self.own_id) {
+            println!("get_clipboard: I'm the owner, returning local clipboard");
             return Ok(self.clipboard.lock().unwrap().clone());
         }
 
+        println!(
+            "get_clipboard: getting clipboard from {:?}",
+            overlay_state.last_copy_src
+        );
         let mut conn = CopyConnection::open(
             &self.own_id,
             &overlay_state.last_copy_src,
@@ -249,6 +300,7 @@ impl Overlay {
         )?;
 
         let msg = conn.read_message()?;
+        println!("->copy: received response: {:?}", msg);
 
         if let MessageType::ErrorResponse { state, error } = msg.message_type {
             println!(
@@ -342,7 +394,13 @@ impl Overlay {
                     continue;
                 }
                 let mut p2p_conn = p2p_conn.unwrap();
-                let peer = Peer::new(p2p_conn, self.own_id.clone(), self.state.clone());
+                let peer = Peer::new(
+                    p2p_conn,
+                    self.own_id.clone(),
+                    p.clone(),
+                    self.connected_peers.clone(),
+                    self.state.clone(),
+                );
                 if let Err(e) = peer {
                     println!("->join: unable to construct peer: {}", e);
                     continue;
@@ -496,7 +554,7 @@ impl Overlay {
     ) {
         thread::spawn(move || {
             // TODO update state
-            let peer = Peer::new(c, own_id, state.clone());
+            let peer = Peer::new(c, own_id, remote_id.clone(), peers.clone(), state.clone());
             if let Err(e) = peer {
                 println!("<-p2p: unable to construct peer: {}", e);
                 return;
