@@ -4,10 +4,16 @@ use std::collections::hash_map::Entry;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 
-// This is the vector-clock implementation taken from vectorclock-rs.
+// This is the vector clock implementation taken from vectorclock-rs.
 // Some things are cleaned up, some things were added, some removed.
-// We have to copy it here to implement Serialize and Deserialize.
+// We have to copy it here to implement conflict resolution for concurrent clocks.
 
+/// A TemporalRelation is a temporal relation between two VectorClocks.
+/// Notably, Caused means "this clock caused the other clock", i.e. this clock came before the
+/// other, and EffectOf means "this clock is an effect of the other clock", i.e. this clock came
+/// after the other.
+/// ConcurrentGreater and ConcurrentSmaller are relations necessary to resolve conflicts between
+/// concurrent clocks.
 #[derive(Debug, PartialEq, Eq, Copy, Clone, Serialize, Deserialize)]
 pub enum TemporalRelation {
     Equal,
@@ -17,25 +23,28 @@ pub enum TemporalRelation {
     ConcurrentSmaller,
 }
 
+/// A VectorClock implements the vector clock algorithm.
 #[derive(PartialEq, Eq, Debug, Serialize, Deserialize, Clone)]
 pub struct VectorClock<HostType: Hash + Eq + Clone + Ord + Debug> {
     entries: HashMap<HostType, u64>,
 }
 
 impl<HostType: Clone + Hash + Eq + Ord + Debug> VectorClock<HostType> {
+    /// Creates an empty VectorClock.
     pub fn new() -> VectorClock<HostType> {
         VectorClock {
             entries: HashMap::new(),
         }
     }
 
+    /// Increments the counter for [host] by one.
     pub fn incr(&mut self, host: HostType) {
         let count = self.entries.entry(host).or_insert(0);
         *count += 1
     }
 
-    /// incr_clone clones the clock and increments the given host's value by one.
-    /// this is the original implementation of increment, but I think it sucks.
+    /// Makes a copy of the underlying state, increments the counter for [host] by one and returns
+    /// the copy.
     pub fn incr_clone(&self, host: HostType) -> Self {
         let mut entries = self.entries.clone();
         {
@@ -45,6 +54,9 @@ impl<HostType: Clone + Hash + Eq + Ord + Debug> VectorClock<HostType> {
         VectorClock { entries }
     }
 
+    /// Determines the temporal relation between this clock and [other].
+    /// See the documentation on the `TemporalRelation` enum for an explanation of the values
+    /// returned.
     pub fn temporal_relation(&self, other: &Self) -> TemporalRelation {
         if self == other {
             TemporalRelation::Equal
@@ -151,6 +163,8 @@ impl<HostType: Clone + Hash + Eq + Ord + Debug> VectorClock<HostType> {
         has_smaller
     }
 
+    /// Merges a copy of this clock with [other], returning a new clock that is equal to or greater
+    /// than both this and [other].
     pub fn merge_with(&self, other: &Self) -> Self {
         let mut entries = self.entries.clone();
 
