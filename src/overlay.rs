@@ -7,13 +7,14 @@ use std::collections::HashMap;
 use std::sync::mpsc::*;
 use std::time;
 
+use rand;
+use rand::Rng;
+
 use clock::VectorClock;
 use clock::TemporalRelation;
 use network::*;
 
-use rand;
-use rand::Rng;
-
+/// An enum used to determine the type of message to be sent on a P2PConnection.
 #[derive(Clone, Debug)]
 enum P2PSend {
     Ping(CopyClock),
@@ -21,6 +22,8 @@ enum P2PSend {
     ForwardCopyNotification(CopyClock, u32, u32),
 }
 
+/// Updates the given state with the given [new_state], returning the updated state.
+/// The updated clock will be newer or equal to both clocks.
 fn update_state(overlay_state: Arc<Mutex<CopyClock>>, new_state: CopyClock) -> CopyClock {
     let mut overlay_state = overlay_state.lock().unwrap();
     let ord = overlay_state.clock.temporal_relation(&new_state.clock);
@@ -40,6 +43,7 @@ fn update_state(overlay_state: Arc<Mutex<CopyClock>>, new_state: CopyClock) -> C
     }
 }
 
+/// A Peer encapsulates behaviour about a peer connected over a P2PConnection.
 #[derive(Debug)]
 struct Peer {
     sender: SyncSender<P2PSend>,
@@ -61,7 +65,7 @@ impl Peer {
         let send_copy = send_tx.clone();
         let id_copy = own_id.clone();
 
-        //read loop
+        // Start a read loop.
         thread::spawn(move || loop {
             let msg = conn.read_message();
             if let Err(e) = msg {
@@ -72,7 +76,7 @@ impl Peer {
                 return;
             }
             let msg = msg.unwrap();
-            // TODO maybe move this to another thread? I smell a deadlock from ping-ponging copy notifications...
+            // TODO maybe move this to another thread?
             match msg.message_type {
                 MessageType::Ping { state } => {
                     println!("peer: received ping with state: {:?}", state);
@@ -141,7 +145,7 @@ impl Peer {
             }
         });
 
-        //write loop
+        // Start a write loop.
         thread::spawn(move || loop {
             select! {
                 msg = send_rx.recv() => {
@@ -189,16 +193,22 @@ impl Peer {
         })
     }
 
+    /// Enqueues a Ping to be sent to the peer.
+    /// This usually returns an error if the connection died for some reason.
     fn ping(&self, state: CopyClock) -> Result<(), Box<Error>> {
         self.sender.send(P2PSend::Ping(state))?;
         Ok(())
     }
 
+    /// Enqueues a CopyNotification to be sent to the peer.
+    /// This usually returns an error if the connection died for some reason.
     fn notify_copy(&self, state: CopyClock) -> Result<(), Box<Error>> {
         self.sender.send(P2PSend::CopyNotification(state))?;
         Ok(())
     }
 
+    /// Enqueues forwarding of a CopyNotification to the peer.
+    /// This usually returns an error if the connection died for some reason.
     fn forward_notify_copy(
         &self,
         state: CopyClock,
@@ -210,25 +220,32 @@ impl Peer {
         Ok(())
     }
 
+    /// Closes the connection to the remote peer.
     fn close(&self) -> Result<(), Box<Error>> {
         self.closer.send(())?;
         Ok(())
     }
 }
 
+/// An Overlay encapsulates the functionality of one node in the overlay network.
 pub struct Overlay {
     own_id: PeerID,
     sock: Arc<Mutex<TcpListener>>,
     bootstrap_ids: Vec<PeerID>,
     available_ids: Mutex<Vec<PeerID>>,
     connected_peers: Arc<Mutex<HashMap<PeerID, Peer>>>,
-    // TODO have state, clipboard in one mutex
+    // TODO maybe have state, clipboard in one mutex for more safety
     state: Arc<Mutex<CopyClock>>,
     clipboard: Arc<Mutex<String>>,
     seen_join_message_ids: Arc<Mutex<HashMap<MessageID, ()>>>,
 }
 
 impl Overlay {
+    /// Creates a new overlay, listening on the given IP address, saving the given [bootstrap_peers]
+    /// for bootstrapping.
+    /// Note that the node has not yet joined the network and is not accepting connections after
+    /// this function returns.
+    /// Call `start_accepting`, `perform_join`, and `start_autoping` on the returned overlay.
     pub fn new(addr: &Ipv4Addr, bootstrap_peers: Vec<PeerID>) -> Result<Overlay, Box<Error>> {
         let sock = TcpListener::bind((addr.clone(), 0 as u16))?;
         let local = sock.local_addr()?;
@@ -249,6 +266,8 @@ impl Overlay {
         })
     }
 
+    /// Sets the clipboard to the given [clipboard].
+    /// This increments the state accordingly and sends out CopyNotifications.
     pub fn set_clipboard(&self, clipboard: &String) -> Result<(), Box<Error>> {
         let mut current = self.clipboard.lock().unwrap();
         *current = clipboard.clone();
@@ -280,6 +299,10 @@ impl Overlay {
         Ok(())
     }
 
+    /// Attempts to get the latest clipboard.
+    /// If the own node holds the latest clipboard, a copy of that is returned.
+    /// Otherwise a CopyConnection is opened to the peer who is assumed to have the latest
+    /// clipboard.
     pub fn get_clipboard(&self) -> Result<String, Box<Error>> {
         // TODO strictly speaking this is racy
         let overlay_state = self.state.lock().unwrap().clone();
@@ -350,6 +373,7 @@ impl Overlay {
         }
     }
 
+    /// Joins the overlay network, using the bootstrap peers given at construction time.
     pub fn perform_join(&self) -> Result<(), Box<Error>> {
         // TODO make this  parallel
         // TODO only take n peers for this, not all of them
@@ -417,6 +441,7 @@ impl Overlay {
         Ok(())
     }
 
+    /// Starts a thread to periodically ping connected peers for soft-state.
     pub fn start_autoping(&self) {
         let peers = self.connected_peers.clone();
         let own_id = self.own_id.clone();
@@ -459,6 +484,7 @@ impl Overlay {
         });
     }
 
+    /// Starts a thread to accept incoming connections.
     pub fn start_accepting(&self) {
         let s = self.sock.clone();
         let peers = self.connected_peers.clone();
