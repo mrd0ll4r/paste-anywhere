@@ -1,5 +1,4 @@
 use std::net;
-use clock::VectorClock;
 use std::error::Error;
 use std::io::Read;
 use std::io;
@@ -12,26 +11,15 @@ use rand;
 use rand::Rng;
 use serde;
 use serde_json;
-
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 
+use clock::VectorClock;
+
+/// A PeerID is just an Endpoint.
 pub type PeerID = Endpoint;
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct CopyClock {
-    pub clock: VectorClock<PeerID>,
-    pub last_copy_src: PeerID,
-}
-
-impl CopyClock {
-    pub fn new(clock: &VectorClock<PeerID>, last_copy_src: &PeerID) -> CopyClock {
-        CopyClock {
-            clock: clock.clone(),
-            last_copy_src: last_copy_src.clone(),
-        }
-    }
-}
-
+/// An Endpoint is a tuple of IPv4 address and TCP port.
+/// It serializes to a string representation so it can be used as a key for JSON maps.
 #[derive(Debug, Ord, PartialOrd, PartialEq, Eq, Hash, Copy, Clone)]
 pub struct Endpoint {
     ip: net::Ipv4Addr,
@@ -76,16 +64,24 @@ impl Endpoint {
     }
 }
 
-pub type MessageID = [u8; 16];
-
+/// A CopyClock encapsulates a VectorClock and the PeerID of the peer who last pressed copy.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Message {
-    pub message_id: MessageID,
-    pub message_type: MessageType,
-    pub src_id: PeerID,
-    pub ttl: u32,
-    pub hop_count: u32,
+pub struct CopyClock {
+    pub clock: VectorClock<PeerID>,
+    pub last_copy_src: PeerID,
 }
+
+impl CopyClock {
+    pub fn new(clock: &VectorClock<PeerID>, last_copy_src: &PeerID) -> CopyClock {
+        CopyClock {
+            clock: clock.clone(),
+            last_copy_src: last_copy_src.clone(),
+        }
+    }
+}
+
+/// A MessageID is a 16-byte ID for a message, assumed to be unique.
+pub type MessageID = [u8; 16];
 
 fn generate_message_id() -> [u8; 16] {
     let mut b = [0u8; 16];
@@ -99,16 +95,57 @@ fn generate_message_id() -> [u8; 16] {
     b
 }
 
+/// A Message is sent between two peers.
+/// Every message has at least an ID, a source, a TTL and a hop count.
+/// Different message types have additional content.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Message {
+    pub message_id: MessageID,
+    pub message_type: MessageType,
+    pub src_id: PeerID,
+    pub ttl: u32,
+    pub hop_count: u32,
+}
+
+/// A MessageType encodes the type of a message and all fields specific to that type.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum MessageType {
-    // use src_id as source
+    /// A JoinRequest is propagated through the network without changing its source ID.
+    /// That way, peers along the way know the ID (and by that the endpoint) of the new peer.
+    /// A JoinRequest is the first message sent on a `JoinConnection`.
     JoinRequest,
+
+    /// A JoinResponse is reverse-path routed to the joining peer.
+    /// Its source ID is not modified during forwarding, so that the new peer knows the IDs (and by
+    /// that the endpoints) of existing peers.
     JoinResponse { target: Endpoint },
+
+    /// A Ping is used for the soft-state protocol.
+    /// It contains the current state of the sending peer.
+    /// Pings are not flooded through the network, but just ping-pong between two peers on a regular
+    /// basis.
+    /// A Ping is the first message sent on a `P2PConnection`.
     Ping { state: CopyClock },
+
+    /// A Pong is the reply to a Ping.
+    /// The peer receiving the Ping updates its state if necessary and returns its own state with a
+    /// Pong.
     Pong { state: CopyClock },
+
+    /// A CopyNotification is flooded through the network from the peer who pressed copy.
     CopyNotification { state: CopyClock },
+
+    /// A CopyRequest is sent from a peer who pressed paste to the peer who last pressed copy.
+    /// This is the first message sent on a `CopyConnection`, which is specifically opened between
+    /// the two peers to exchange the clipboard.
     CopyRequest { content_type: String },
+
+    /// A TextResponse is the response sent to a CopyRequest if the requested peer has the latest
+    /// clipboard with text content type.
     TextResponse { text: String },
+
+    /// An ErrorResponse is sent in response to a CopyRequest if the requested peer does not have
+    /// the latest clipboard or not a textual clipboard.
     ErrorResponse { state: CopyClock, error: String },
 }
 
@@ -147,6 +184,10 @@ fn read_length_prefixed(r: &mut TcpStream) -> Result<Message, Box<Error>> {
     Ok(deserialized)
 }
 
+/// Starts accepting incoming connections on the given socket, returning an IncomingConnection
+/// on success.
+/// This function determines the type of the incoming connection by its first message, which is
+/// returned as part of the IncomingConnection.
 pub fn accept(socket: &mut net::TcpListener) -> Result<IncomingConnection, Box<Error>> {
     for conn in socket.incoming() {
         if let Err(err) = conn {
@@ -197,11 +238,13 @@ pub fn accept(socket: &mut net::TcpListener) -> Result<IncomingConnection, Box<E
     Err(From::from("no incoming connection?"))
 }
 
+/// An IncomingConnection encapsulates a Connection and the first message received.
 pub struct IncomingConnection {
     pub conn: Connection,
     pub first_msg: Message,
 }
 
+/// A Connection determines the type of connection established between two peers.
 #[derive(Debug)]
 pub enum Connection {
     Join(JoinConnection),
@@ -209,23 +252,16 @@ pub enum Connection {
     P2P(P2PConnection),
 }
 
-// TODO this might not be needed later
-impl Connection {
-    pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
-        match self {
-            &mut Connection::Join(ref mut c) => c.read_message(),
-            &mut Connection::Copy(ref mut c) => c.read_message(),
-            &mut Connection::P2P(ref mut c) => c.read_message(),
-        }
-    }
-}
-
+/// The Direction determines the direction of a JoinConnection or CopyConnection.
+/// P2PConnections are bidirectional by nature.
 #[derive(Debug, PartialOrd, PartialEq, Clone)]
 pub enum Direction {
     Incoming,
     Outgoing,
 }
 
+/// A JoinConnection is the type of connection established when a peer joins the network or searches
+/// for more peers.
 #[derive(Debug)]
 pub struct JoinConnection {
     conn: net::TcpStream,
@@ -244,6 +280,7 @@ impl JoinConnection {
         })
     }
 
+    /// Opens a new connection to [remote], presenting [local] as the joining peer.
     pub fn open(local: &PeerID, remote: &PeerID, ttl: u32) -> Result<JoinConnection, Box<Error>> {
         let msg = Message {
             message_id: generate_message_id(),
@@ -256,6 +293,7 @@ impl JoinConnection {
         JoinConnection::connect(remote, msg)
     }
 
+    /// Opens a new connection to [remote], forwarding [incoming] as part of the flooding procedure.
     pub fn forward(remote: &PeerID, incoming: &Message) -> Result<JoinConnection, Box<Error>> {
         let msg = Message {
             message_id: incoming.message_id,
@@ -268,7 +306,9 @@ impl JoinConnection {
         JoinConnection::connect(remote, msg)
     }
 
-    pub fn respond(&mut self, own_id: &Endpoint, incoming: &Message) -> Result<(), Box<Error>> {
+    /// Responds to [incoming] with [own_id] as the ID.
+    /// The response is then reverse-path routed to the original sender.
+    pub fn respond(&mut self, own_id: &PeerID, incoming: &Message) -> Result<(), Box<Error>> {
         if self.dir != Direction::Incoming {
             return Err(From::from("can only respond on incoming connections"));
         }
@@ -286,6 +326,7 @@ impl JoinConnection {
         write_length_prefixed(&mut self.conn, &msg)
     }
 
+    /// Forwards a response via reverse-path routing to [target].
     pub fn forward_response(
         &mut self,
         incoming: &Message,
@@ -308,6 +349,7 @@ impl JoinConnection {
         write_length_prefixed(&mut self.conn, &msg)
     }
 
+    /// Reads a message off the underlying socket, iff this is an outgoing connection.
     pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
         if self.dir != Direction::Outgoing {
             return Err(From::from("can only read on outgoing JoinConnection"));
@@ -316,6 +358,7 @@ impl JoinConnection {
         read_length_prefixed(&mut self.conn)
     }
 
+    /// Flushes and closes the connection.
     pub fn close(mut self) -> Result<(), Box<Error>> {
         self.conn.flush()?;
         Ok(())
@@ -323,6 +366,8 @@ impl JoinConnection {
     }
 }
 
+/// A CopyConnection is the type of connection established between a peer who wants the clipboard
+/// and a peer who is believed to have the clipboard.
 #[derive(Debug)]
 pub struct CopyConnection {
     conn: net::TcpStream,
@@ -341,10 +386,10 @@ impl CopyConnection {
         })
     }
 
+    /// Opens a new CopyConnection to [remote].
     pub fn open(
         local: &PeerID,
         remote: &PeerID,
-        ttl: u32,
         content_type: &String,
     ) -> Result<CopyConnection, Box<Error>> {
         let msg = Message {
@@ -353,14 +398,15 @@ impl CopyConnection {
                 content_type: content_type.clone(),
             },
             src_id: local.clone(),
-            ttl: ttl,
+            ttl: 1,
             hop_count: 0,
         };
 
         CopyConnection::connect(remote, msg)
     }
 
-    pub fn respond(&mut self, text: &String, local: &Endpoint) -> Result<(), Box<Error>> {
+    /// Responds to the request with the contents of the clipboard.
+    pub fn respond(&mut self, text: &String, local: &PeerID) -> Result<(), Box<Error>> {
         if self.dir != Direction::Incoming {
             return Err(From::from("can only respond on incoming connection"));
         }
@@ -376,6 +422,7 @@ impl CopyConnection {
         write_length_prefixed(&mut self.conn, &msg)
     }
 
+    /// Responds to the request with an error and the local state.
     pub fn respond_error(
         &mut self,
         error: &String,
@@ -400,6 +447,8 @@ impl CopyConnection {
         write_length_prefixed(&mut self.conn, &msg)
     }
 
+    /// Reads a message (the response) off the underlying socket, iff this is an outgoing
+    /// connection.
     pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
         if self.dir != Direction::Outgoing {
             return Err(From::from("can only read on outgoing CopyConnection"));
@@ -408,6 +457,7 @@ impl CopyConnection {
         read_length_prefixed(&mut self.conn)
     }
 
+    /// Flushes and closes the connection.
     pub fn close(mut self) -> Result<(), Box<Error>> {
         self.conn.flush()?;
         Ok(())
@@ -415,6 +465,8 @@ impl CopyConnection {
     }
 }
 
+/// A P2PConnection is the type of connection upheld between peers to exchange copy notifications
+/// and soft state updates.
 #[derive(Debug)]
 pub struct P2PConnection {
     conn: net::TcpStream,
@@ -433,10 +485,10 @@ impl P2PConnection {
         })
     }
 
+    /// Opens a new connection to [remote], sending a Ping with state [state].
     pub fn open(
         local: &PeerID,
         remote: &PeerID,
-        ttl: u32,
         state: &CopyClock,
     ) -> Result<P2PConnection, Box<Error>> {
         let msg = Message {
@@ -445,13 +497,17 @@ impl P2PConnection {
                 state: state.clone(),
             },
             src_id: local.clone(),
-            ttl: ttl,
+            ttl: 1,
             hop_count: 0,
         };
 
         P2PConnection::connect(remote, msg)
     }
 
+    /// Attempts to duplicate the underlying socket.
+    /// This is necessary if one thread is to read off the connection and another thread is to
+    /// write.
+    /// Behaviour is operating system dependent, but works on Linux...
     pub fn dup(&self) -> Result<P2PConnection, Box<Error>> {
         let conn = self.conn.try_clone()?;
         Ok(P2PConnection {
@@ -460,6 +516,7 @@ impl P2PConnection {
         })
     }
 
+    /// Sends a Ping with state [state].
     pub fn ping(&mut self, state: &CopyClock, local: &Endpoint) -> Result<(), Box<Error>> {
         let msg = Message {
             message_id: generate_message_id(),
@@ -476,6 +533,7 @@ impl P2PConnection {
         Ok(())
     }
 
+    /// Sends a Pong with state [state].
     pub fn pong(&mut self, state: &CopyClock, local: &Endpoint) -> Result<(), Box<Error>> {
         let msg = Message {
             message_id: generate_message_id(),
@@ -492,6 +550,7 @@ impl P2PConnection {
         Ok(())
     }
 
+    /// Sends a CopyNotification with state [state] and TTL=8.
     pub fn notify_copy(&mut self, state: &CopyClock, local: &Endpoint) -> Result<(), Box<Error>> {
         let msg = Message {
             message_id: generate_message_id(),
@@ -508,6 +567,7 @@ impl P2PConnection {
         Ok(())
     }
 
+    /// Forwards a CopyNotification for flooding.
     pub fn forward_notify_copy(
         &mut self,
         state: &CopyClock,
@@ -530,10 +590,12 @@ impl P2PConnection {
         Ok(())
     }
 
+    /// Reads a message off the underlying socket.
     pub fn read_message(&mut self) -> Result<Message, Box<Error>> {
         read_length_prefixed(&mut self.conn)
     }
 
+    /// Flushes and closes the connection.
     pub fn close(mut self) -> Result<(), Box<Error>> {
         self.conn.flush()?;
         Ok(())

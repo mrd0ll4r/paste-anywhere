@@ -295,7 +295,6 @@ impl Overlay {
         let mut conn = CopyConnection::open(
             &self.own_id,
             &overlay_state.last_copy_src,
-            8,
             &"text".to_string(),
         )?;
 
@@ -388,7 +387,7 @@ impl Overlay {
             for i in 0..available.len() {
                 let p = available[i];
                 println!("->join: building p2p connection to peer at {:?}", p);
-                let mut p2p_conn = P2PConnection::open(&self.own_id, &p, 8, &state);
+                let mut p2p_conn = P2PConnection::open(&self.own_id, &p, &state);
                 if let Err(e) = p2p_conn {
                     println!("->join: unable to open connection: {}", e);
                     continue;
