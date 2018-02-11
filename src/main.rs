@@ -24,6 +24,7 @@ use std::time;
 use clipboard::Clipboard;
 use std::sync::Mutex;
 use rand::Rng;
+use std::str::FromStr;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -45,9 +46,10 @@ fn main() {
 //        print!("{:?}\n", x);
 //        return;
 //    }
-
+    let local_ip=Ipv4Addr::from_str(args[1].as_ref())
+        .unwrap_or(Ipv4Addr::new(127, 0, 0, 1));
     let mut bootstrap_peers: Vec<Endpoint> = Vec::new();
-    for i in 1..args.len() {
+    for i in 2..args.len() {
         let p = &args[i];
         let addr: SocketAddr = p.parse().unwrap();
         if !addr.is_ipv4() {
@@ -58,7 +60,7 @@ fn main() {
         }
     }
 
-    let o = Arc::new(Overlay::new(&Ipv4Addr::new(0, 0, 0, 0), bootstrap_peers).unwrap());
+    let o = Arc::new(Overlay::new(&local_ip, bootstrap_peers).unwrap());
 
     o.start_accepting();
     o.start_autoping();
@@ -98,7 +100,8 @@ fn main() {
                 println!("\tlocal clipboard is: {}", content.clone());
                 o.set_clipboard(content.clone().as_ref());
             },
-            Ok(None) => println!("\tclipboard has not changed!"),
+//            Ok(None) => println!("\tclipboard has not changed!"),
+            Ok(None) => (),
         }
         //sleep 200ms + random?
 //        let ns=rng.gen_range();
