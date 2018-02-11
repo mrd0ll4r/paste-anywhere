@@ -75,24 +75,25 @@ fn main() {
         let oo = o.clone();
         let cc = c.clone();
         thread::spawn(move || {
-            for i in 0..100 {
-                thread::sleep(time::Duration::new(17, i * 1000 * 1000 * 10));
-                println!("getting clipboard...");
+            loop {
+                thread::sleep(time::Duration::new(0, 197 * 1000 * 1000));
+                //println!("getting clipboard...");
                 let resp = oo.get_clipboard();
                 match resp {
                     Err(e) => println!("unable to get clipboard: {}", e),
                     Ok(Some(content)) => {
-                        println!("clipboard is: {}", content.clone());
+                        //println!("clipboard is: {}", content.clone());
                         cc.lock().unwrap().set_contents(content);
                     },
-                    Ok(None) => println!("clipboard is local!"),
+                    //Ok(None) => println!("clipboard is local!"),
+                    Ok(None) => (),
                 };
             }
             println!("-oo-supervisor-thread-closed-");
         });
     }
     let mut rng=rand::thread_rng();
-    while true{
+    loop {
         let cb_content=c.lock().unwrap().get_contents();
         match cb_content{
             Err(e) => println!("\tunable to get local clipboard: {}", e),
@@ -105,7 +106,7 @@ fn main() {
         }
         //sleep 200ms + random?
 //        let ns=rng.gen_range();
-        thread::sleep(time::Duration::new(0,200*1000*1000))
+        thread::sleep(time::Duration::new(0,211*1000*1000))
     }
 
 

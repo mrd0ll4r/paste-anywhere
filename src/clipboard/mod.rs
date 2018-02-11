@@ -20,6 +20,9 @@ impl Clipboard {
     }
 
     pub fn set_contents(&mut self, data: String) -> Result<(), Box<Error>> {
+        if self.last_content == data {
+            return Ok(())
+        }
         self.last_content=data.clone();
         Ok(self.x11_clipboard.store(
             self.x11_clipboard.setter.atoms.clipboard,

@@ -314,7 +314,7 @@ impl Overlay {
         // TODO strictly speaking this is racy
         let overlay_state = self.state.lock().unwrap().clone();
         if overlay_state.last_copy_src.eq(&self.own_id) {
-            println!("get_clipboard: I'm the owner, returning local clipboard");
+            //println!("get_clipboard: I'm the owner, returning local clipboard");
             return Ok(None);
         }
         //if the state hasn't changed, return the last content.
