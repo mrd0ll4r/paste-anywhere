@@ -58,7 +58,7 @@ fn main() {
         }
     }
 
-    let o = Arc::new(Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), bootstrap_peers).unwrap());
+    let o = Arc::new(Overlay::new(&Ipv4Addr::new(0, 0, 0, 0), bootstrap_peers).unwrap());
 
     o.start_accepting();
     o.start_autoping();
