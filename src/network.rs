@@ -65,7 +65,7 @@ impl Endpoint {
 }
 
 /// A CopyClock encapsulates a VectorClock and the PeerID of the peer who last pressed copy.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, Eq, PartialEq)]
 pub struct CopyClock {
     pub clock: VectorClock<PeerID>,
     pub last_copy_src: PeerID,

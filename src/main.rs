@@ -22,61 +22,29 @@ use std::env;
 use std::thread;
 use std::time;
 use clipboard::Clipboard;
+use std::sync::Mutex;
+use rand::Rng;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
+    let (cb,_)=Clipboard::init().unwrap();
+    let c= Arc::new(Mutex::new(cb));
 
-    if args.len() == 1 {
-        let o = Arc::new(Overlay::new(&Ipv4Addr::new(127, 0, 0, 1), Vec::new()).unwrap());
-
-        o.start_accepting();
-        o.start_autoping();
-
-        println!("performing join...");
-        let join = o.perform_join();
-        if let Err(e) = join {
-            println!("join failed: {}", e);
-        }
-
-        {
-            let oo = o.clone();
-            thread::spawn(move || {
-                for i in 0..100 {
-                    thread::sleep(time::Duration::new(17, i * 1000 * 1000 * 10));
-                    println!("getting clipboard...");
-                    let resp = oo.get_clipboard();
-                    match resp {
-                        Err(e) => println!("unable to get clipboard: {}", e),
-                        Ok(content) => println!("clipboard is: {}", content),
-                    };
-                }
-            });
-        }
-
-        for i in 0..100 {
-            thread::sleep(time::Duration::new(17, i * 1000 * 1000 * 10));
-            println!("setting clipboard...");
-            o.set_clipboard(&"first".to_string());
-        }
-
-        println!("going to sleep...");
-        thread::sleep(time::Duration::new(60 * 60, 0));
-    }
-
-    if args[1].starts_with("clip") {
-        let mut cbi = Clipboard::init().unwrap();
-        println!("!-----------------------!");
-        let mut cb = cbi.0;
-        print!("{:?}\n", cb.waitForString().unwrap());
-        print!("{:?}\n", "HI");
-        cb.set_contents("DASDA".to_string());
-        print!("{:?}\n", cb.waitForString().unwrap());
-        thread::sleep(time::Duration::from_secs(10));
-        println!("!-----------------------!");
-        let x = cb.waitForString().unwrap();
-        print!("{:?}\n", x);
-        return;
-    }
+//    if args[1].starts_with("clip") {
+//        let mut cbi = Clipboard::init().unwrap();
+//        println!("!-----------------------!");
+//        let mut cb = cbi.0;
+//        cb.set_contents("DASDA34".to_string());
+//        print!("{:?}\n", cb.get_contents().unwrap());
+//        print!("{:?}\n", "HI");
+//        cb.set_contents("DASDA".to_string());
+//        print!("{:?}\n", cb.get_contents().unwrap());
+//        thread::sleep(time::Duration::from_secs(10));
+//        println!("!-----------------------!");
+//        let x = cb.get_contents().unwrap();
+//        print!("{:?}\n", x);
+//        return;
+//    }
 
     let mut bootstrap_peers: Vec<Endpoint> = Vec::new();
     for i in 1..args.len() {
@@ -103,6 +71,7 @@ fn main() {
 
     {
         let oo = o.clone();
+        let cc = c.clone();
         thread::spawn(move || {
             for i in 0..100 {
                 thread::sleep(time::Duration::new(17, i * 1000 * 1000 * 10));
@@ -110,18 +79,46 @@ fn main() {
                 let resp = oo.get_clipboard();
                 match resp {
                     Err(e) => println!("unable to get clipboard: {}", e),
-                    Ok(content) => println!("clipboard is: {}", content),
+                    Ok(Some(content)) => {
+                        println!("clipboard is: {}", content.clone());
+                        cc.lock().unwrap().set_contents(content);
+                    },
+                    Ok(None) => println!("clipboard is local!"),
                 };
             }
+            println!("-oo-supervisor-thread-closed-");
         });
     }
-
-    for i in 0..100 {
-        thread::sleep(time::Duration::new(19, i * 1000 * 1000 * 10));
-        println!("setting clipboard...");
-        o.set_clipboard(&"not first".to_string());
+    let mut rng=rand::thread_rng();
+    while true{
+        let cb_content=c.lock().unwrap().get_contents();
+        match cb_content{
+            Err(e) => println!("\tunable to get local clipboard: {}", e),
+            Ok(Some(content)) => {
+                println!("\tlocal clipboard is: {}", content.clone());
+                o.set_clipboard(content.clone().as_ref());
+            },
+            Ok(None) => println!("\tclipboard has not changed!"),
+        }
+        //sleep 200ms + random?
+//        let ns=rng.gen_range();
+        thread::sleep(time::Duration::new(0,200*1000*1000))
     }
 
-    println!("going to sleep...");
-    thread::sleep(time::Duration::new(60 * 60, 0));
+
+//    //TESTING
+//    for i in 0..100 {
+//        if args.len()==1 {
+//            thread::sleep(time::Duration::new(23, i * 1000 * 1000 * 10));
+//            println!("setting clipboard...");
+//            o.set_clipboard("first");
+//        }else {
+//            thread::sleep(time::Duration::new(19, i * 1000 * 1000 * 10));
+//            println!("setting clipboard...");
+//            o.set_clipboard("not first");
+//        }
+//    }
+//
+//    println!("going to sleep...");
+//    thread::sleep(time::Duration::new(60 * 60, 0));
 }

@@ -238,6 +238,8 @@ pub struct Overlay {
     state: Arc<Mutex<CopyClock>>,
     clipboard: Arc<Mutex<String>>,
     seen_join_message_ids: Arc<Mutex<HashMap<MessageID, ()>>>,
+    cached_clipboard: Arc<Mutex<String>>,
+    cache_state: Arc<Mutex<CopyClock>>,
 }
 
 impl Overlay {
@@ -263,14 +265,19 @@ impl Overlay {
             ))),
             clipboard: Arc::new(Mutex::new(String::new())),
             seen_join_message_ids: Arc::new(Mutex::new(HashMap::new())),
+            cached_clipboard: Arc::new(Mutex::new(String::new())),
+            cache_state: Arc::new(Mutex::new(CopyClock::new(
+                &VectorClock::new(),
+                &PeerID::new(&addr, local.port()),
+            ))),
         })
     }
 
     /// Sets the clipboard to the given [clipboard].
     /// This increments the state accordingly and sends out CopyNotifications.
-    pub fn set_clipboard(&self, clipboard: &String) -> Result<(), Box<Error>> {
+    pub fn set_clipboard(&self, clipboard: &str) -> Result<(), Box<Error>> {
         let mut current = self.clipboard.lock().unwrap();
-        *current = clipboard.clone();
+        *current = clipboard.to_string();
 
         let mut overlay_state = self.state.lock().unwrap();
         *overlay_state = CopyClock {
@@ -300,15 +307,23 @@ impl Overlay {
     }
 
     /// Attempts to get the latest clipboard.
-    /// If the own node holds the latest clipboard, a copy of that is returned.
+    /// If the own node holds the latest clipboard, ok(None) is returned, because the local clipboard should not point to this application but rather to the (local) source.
     /// Otherwise a CopyConnection is opened to the peer who is assumed to have the latest
     /// clipboard.
-    pub fn get_clipboard(&self) -> Result<String, Box<Error>> {
+    pub fn get_clipboard(&self) -> Result<Option<String>, Box<Error>> {
         // TODO strictly speaking this is racy
         let overlay_state = self.state.lock().unwrap().clone();
         if overlay_state.last_copy_src.eq(&self.own_id) {
             println!("get_clipboard: I'm the owner, returning local clipboard");
-            return Ok(self.clipboard.lock().unwrap().clone());
+            return Ok(None);
+        }
+        //if the state hasn't changed, return the last content.
+        {
+            let cached_state = self.cache_state.lock().unwrap().clone();
+            if cached_state == overlay_state{
+                println!("get_clipboard: Cache is recent and valid, returning cached clipboard");
+                return Ok(Some(self.cached_clipboard.lock().unwrap().clone()));
+            }
         }
 
         println!(
@@ -334,7 +349,11 @@ impl Overlay {
             return Err(From::from(format!("remote  replied with error: {}", error)));
         }
         if let MessageType::TextResponse { text } = msg.message_type {
-            return Ok(text);
+            let mut s=self.cached_clipboard.lock().unwrap();
+            *s=text.clone();
+            let mut c= self.cache_state.lock().unwrap();
+            *c = self.state.lock().unwrap().clone();
+            return Ok(Some(text));
         }
 
         println!("->copy: received invalid response, got: {:?}", msg);
